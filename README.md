@@ -1,10 +1,10 @@
-# Dexter - Financial Research Agent (Python Implementation)
+# FinCode - Financial Research Agent (Python Implementation)
 
-A Python implementation of the Dexter financial research agent using the Textual framework for terminal UI. This is a port of the TypeScript/Bun version to Python with XAI API integration.
+A Python implementation of the FinCode financial research agent using the Textual framework for terminal UI. This is a port of the TypeScript/Bun version to Python with XAI API integration.
 
 ## Overview
 
-Dexter is an autonomous financial research agent that thinks, plans, and learns as it works. It performs analysis using task planning, self-reflection, and real-time market data.
+FinCode is an autonomous financial research agent that thinks, plans, and learns as it works. It performs analysis using task planning, self-reflection, and real-time market data.
 
 **Key Capabilities:**
 - **Intelligent Task Planning**: Automatically decomposes complex queries into structured research steps
@@ -15,7 +15,7 @@ Dexter is an autonomous financial research agent that thinks, plans, and learns 
 
 ## Architecture
 
-Dexter uses a ReAct (Reasoning + Acting) pattern with the following components:
+FinCode uses a ReAct (Reasoning + Acting) pattern with the following components:
 
 ```
 User Query
@@ -99,7 +99,7 @@ python3 test_xai_integration.py
 
 ## Example Queries
 
-Try asking Dexter questions like:
+Try asking FinCode questions like:
 
 - "What was Apple's revenue growth over the last 4 quarters?"
 - "Compare Microsoft and Google's operating margins for 2023"
@@ -248,7 +248,7 @@ This project is licensed under the MIT License - see the LICENSE file for detail
 
 ## Acknowledgments
 
-- Original Dexter implementation: [virattt/dexter](https://github.com/virattt/dexter)
+- Original FinCode implementation: [virattt/dexter](https://github.com/virattt/dexter)
 - Python port and XAI integration: Predictive Labs AI
 - Built with [LangChain](https://js.langchain.com), [Textual](https://textual.textualize.io), and [xAI API](https://console.x.ai)
 

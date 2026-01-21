@@ -1,4 +1,4 @@
-"""Main Textual application for Dexter."""
+"""Main Textual application for FinCode."""
 import asyncio
 from typing import Optional
 from textual.app import ComposeResult, on
@@ -22,7 +22,7 @@ class IntroPanel(Static):
 
     def render(self) -> Panel:
         """Render the intro panel."""
-        intro_text = f"""[bold cyan]Dexter[/bold cyan] - Financial Research Agent
+        intro_text = f"""[bold cyan]FinCode[/bold cyan] - Financial Research Agent
 
 [yellow]Model:[/yellow] {self.model}
 [yellow]Provider:[/yellow] {self.provider}
@@ -69,8 +69,8 @@ class OutputLog(RichLog):
         super().__init__(id="output_log")
 
 
-class DexterApp:
-    """Main Dexter application."""
+class FinCodeApp:
+    """Main FinCode application."""
 
     def __init__(self, model: str = "gpt-4.1-mini", provider: str = "openai"):
         self.model = model
@@ -111,7 +111,7 @@ class DexterApp:
         """Run the application."""
         await self.initialize()
 
-        print("\n[bold cyan]Dexter[/bold cyan] - Financial Research Agent")
+        print("\n[bold cyan]FinCode[/bold cyan] - Financial Research Agent")
         print(f"[yellow]Model:[/yellow] {self.model}")
         print(f"[yellow]Provider:[/yellow] {self.provider}")
         print("\nType your financial research query and press Enter.")
@@ -137,7 +137,7 @@ class DexterApp:
 
                 answer = await self.process_query(query)
 
-                print(f"\n[bold cyan]Dexter:[/bold cyan]\n{answer}\n")
+                print(f"\n[bold cyan]FinCode:[/bold cyan]\n{answer}\n")
                 self.is_processing = False
 
             except KeyboardInterrupt:

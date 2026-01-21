@@ -1,8 +1,8 @@
-# Dexter Python Implementation - Project Summary
+# FinCode Python Implementation - Project Summary
 
 ## Project Overview
 
-Successfully reimplemented the Dexter financial research agent from TypeScript/Bun to Python with Textual framework and XAI API integration.
+Successfully reimplemented the FinCode financial research agent from TypeScript/Bun to Python with Textual framework and XAI API integration.
 
 ## What Was Accomplished
 
@@ -160,7 +160,7 @@ python3 src/main.py
 ### Repository
 - **URL**: https://github.com/predictivelabsai/fincode
 - **Branch**: main
-- **Commit**: 35d25dd - "Add Python Textual implementation of Dexter with XAI API integration"
+- **Commit**: 35d25dd - "Add Python Textual implementation of FinCode with XAI API integration"
 
 ### Files Pushed
 - 20 new files created
@@ -256,7 +256,7 @@ LLMProvider.get_model(model, provider)
 
 ## Conclusion
 
-Successfully reimplemented Dexter as a Python application with Textual framework and XAI API integration. The implementation maintains feature parity with the original TypeScript version while providing a clean, extensible architecture for financial research automation.
+Successfully reimplemented FinCode as a Python application with Textual framework and XAI API integration. The implementation maintains feature parity with the original TypeScript version while providing a clean, extensible architecture for financial research automation.
 
 The XAI API integration is fully operational and tested, demonstrating Grok-3's capability to handle financial research queries and tool orchestration.
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Main entry point for Dexter."""
+"""Main entry point for FinCode."""
 import asyncio
 import os
 import sys
@@ -9,7 +9,7 @@ from dotenv import load_dotenv
 # Add parent directory to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from src.components.app import DexterApp
+from src.components.app import FinCodeApp
 
 
 async def main():
@@ -24,7 +24,7 @@ async def main():
     provider = os.getenv("MODEL_PROVIDER", "openai")
 
     # Create and run app
-    app = DexterApp(model=model, provider=provider)
+    app = FinCodeApp(model=model, provider=provider)
     await app.run()
 
 

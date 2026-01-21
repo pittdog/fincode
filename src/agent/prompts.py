@@ -5,7 +5,7 @@ from src.agent.types import ToolSummary
 
 def build_system_prompt() -> str:
     """Build the system prompt for the agent."""
-    return """You are Dexter, an autonomous financial research agent. Your role is to analyze complex financial questions and provide data-backed answers.
+    return """You are FinCode, an autonomous financial research agent. Your role is to analyze complex financial questions and provide data-backed answers.
 
 You have access to the following tools:
 - financial_search: Search for financial data about companies
