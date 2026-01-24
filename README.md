@@ -130,6 +130,56 @@ Try asking FinCode questions like:
 - "Analyze Tesla's cash flow trends over the past year"
 - "What is Amazon's debt-to-equity ratio based on recent financials?"
 
+## Architecture
+
+FinCode uses a modular architecture built on **LangGraph** for robust state management and deterministic agentic flows.
+
+```mermaid
+graph TD
+    subgraph UI ["User Interfaces"]
+        TUI["fincode_tui.py (Textual)"]
+        CLI["fincode_cli.py (Rich)"]
+    end
+
+    subgraph Core ["Core Agent Loop (LangGraph)"]
+        Graph["StateGraph"]
+        ModelNode["call_model node"]
+        ToolNode["execute_tools node"]
+        FinalNode["generate_final_answer node"]
+        
+        Graph --> ModelNode
+        ModelNode -->|Tool Call| ToolNode
+        ToolNode --> ModelNode
+        ModelNode -->|Complete| FinalNode
+    end
+
+    subgraph Tools ["Research Tools"]
+        FinDat["FinancialSearchTool (Massive / FinDatasets)"]
+        WebDat["WebSearchTool (Tavily)"]
+    end
+
+    subgraph Providers ["LLM Providers"]
+        XAI["xAI (Grok-3)"]
+        OpenAI["OpenAI (GPT-4)"]
+        Anthropic["Anthropic (Claude)"]
+        Gemini["Google (Gemini)"]
+    end
+
+    TUI <--> Graph
+    CLI <--> Graph
+    
+    ModelNode <--> Providers
+    FinalNode <--> Providers
+    ToolNode <--> Tools
+```
+
+### Key Components
+
+1.  **Orchestration**: LangGraph manages the agent's state transitions, ensuring that tool results are correctly fed back into the reasoning process until a final answer is synthesized.
+2.  **State Management**: The `AgentState` tracks conversation history, research scratchpads, and summarized tool results to maintain context across multiple iterations.
+3.  **Extensible Tools**: The system is designed to easily incorporate new data sources, such as specialized alpha generators or real-time news feeds.
+4.  **Provider Agnostic**: Seamlessly switch between different LLM backends using environment variables.
+
 ## Project Structure
 
 ```
