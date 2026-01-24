@@ -6,6 +6,15 @@ A Python implementation of the FinCode financial research agent using the Textua
 
 FinCode is an autonomous financial research agent that thinks, plans, and learns as it works. It performs analysis using task planning, self-reflection, and real-time market data.
 
+## Demo
+
+### Interactive CLI
+![CLI Query](img/cli_query.png)
+*Asking a complex financial research question*
+
+![CLI Response](img/cli_response.png)
+*Agent reasoning and final answer*
+
 **Key Capabilities:**
 - **Intelligent Task Planning**: Automatically decomposes complex queries into structured research steps
 - **Autonomous Execution**: Selects and executes the right tools to gather financial data

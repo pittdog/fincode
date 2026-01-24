@@ -67,7 +67,7 @@ class Agent:
             ),
             StructuredTool(
                 name="get_financials",
-                description="Get financial statements for a company",
+                description="Get financial statements for a company. Parameters: ticker (stock symbol, e.g. 'AAPL'), statement_type ('income', 'balance', or 'cash_flow'), and period ('annual' or 'quarterly').",
                 func=financial_tool.get_financials,
                 args_schema=None,
             ),
