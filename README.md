@@ -9,11 +9,11 @@ FinCode is an autonomous financial research agent that thinks, plans, and learns
 ## Demo
 
 ### Interactive CLI
-![CLI Query](img/cli_query.png)
 *Using news, financials, and quote tools*
+![CLI Query](img/cli_query.png)
 
-![CLI Response](img/cli_response.png)
 *Agent reasoning and final answer*
+![CLI Response](img/cli_response.png)
 
 **Key Capabilities:**
 - **Intelligent Task Planning**: Automatically decomposes complex queries into structured research steps
