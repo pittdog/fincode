@@ -1,10 +1,15 @@
-"""Core agent implementation with ReAct pattern."""
+"""Core agent implementation with LangGraph architecture."""
 import json
 import asyncio
-from typing import AsyncGenerator, Optional, Any, Dict, List
+import re
+import os
+from typing import AsyncGenerator, Optional, Any, Dict, List, Annotated, TypedDict, Union
 from datetime import datetime
+from operator import add
+
 from langchain_core.tools import StructuredTool
-from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
+from langchain_core.messages import HumanMessage, AIMessage, SystemMessage, BaseMessage
+from langgraph.graph import StateGraph, END
 
 from agent.types import (
     AgentConfig,
@@ -27,8 +32,19 @@ from agent.prompts import (
 )
 
 
+class AgentState(TypedDict):
+    """State management for the LangGraph agent."""
+    messages: Annotated[List[BaseMessage], add]
+    query: str
+    scratchpad: str
+    summaries: Annotated[List[ToolSummary], add]
+    iteration: int
+    final_answer: Optional[str]
+    events: List[AgentEvent] # For internal event passing if needed
+
+
 class Agent:
-    """ReAct-style agent for financial research."""
+    """LangGraph-based agent for financial research."""
 
     DEFAULT_MAX_ITERATIONS = 10
 
@@ -47,6 +63,126 @@ class Agent:
         self.system_prompt = system_prompt
         self.signal = config.signal
         self.llm = LLMProvider.get_model(self.model, self.model_provider)
+        self.graph = self._build_graph()
+
+    def _build_graph(self) -> StateGraph:
+        """Build the LangGraph state machine."""
+        builder = StateGraph(AgentState)
+
+        # Define nodes
+        builder.add_node("call_model", self._call_model)
+        builder.add_node("execute_tools", self._execute_tools)
+        builder.add_node("generate_final_answer", self._generate_final_answer)
+
+        # Define edges
+        builder.set_entry_point("call_model")
+        
+        builder.add_conditional_edges(
+            "call_model",
+            self._should_continue,
+            {
+                "tools": "execute_tools",
+                "final": "generate_final_answer",
+                "end": END
+            }
+        )
+        
+        builder.add_edge("execute_tools", "call_model")
+        builder.add_edge("generate_final_answer", END)
+
+        return builder.compile()
+
+    async def _call_model(self, state: AgentState) -> Dict[str, Any]:
+        """Node: Call LLM to decide next step."""
+        iteration = state["iteration"] + 1
+        query = state["query"]
+        messages = state["messages"]
+        scratchpad = state["scratchpad"]
+        summaries = state["summaries"]
+
+        # Build iteration prompt
+        iteration_prompt = build_iteration_prompt(query, scratchpad, summaries)
+        
+        # Build actual messages for this call
+        # We always include the system prompt and the current message history
+        actual_messages = [SystemMessage(content=self.system_prompt)] + messages + [HumanMessage(content=iteration_prompt)]
+
+        # Call LLM
+        response = await asyncio.to_thread(self.llm.invoke, actual_messages)
+        response_text = response.content if hasattr(response, "content") else str(response)
+
+        return {
+            "messages": [AIMessage(content=response_text)],
+            "iteration": iteration
+        }
+
+    async def _execute_tools(self, state: AgentState) -> Dict[str, Any]:
+        """Node: Parse and execute tool calls."""
+        last_message = state["messages"][-1]
+        response_text = last_message.content
+        tool_calls = self._parse_tool_calls(response_text)
+        
+        new_summaries = []
+        new_scratchpadLines = []
+
+        for tool_call in tool_calls:
+            tool_name = tool_call.get("tool", "")
+            tool_args = tool_call.get("args", {})
+
+            if tool_name not in self.tool_map:
+                error_msg = f"Unknown tool: {tool_name}"
+                new_scratchpadLines.append(f"Tool Error ({tool_name}): {error_msg}")
+                continue
+
+            try:
+                tool = self.tool_map[tool_name]
+                result = await asyncio.to_thread(tool.func, **tool_args)
+
+                summary = ToolSummary(
+                    tool=tool_name,
+                    args=tool_args,
+                    result=str(result)[:1000],
+                    timestamp=datetime.now().isoformat(),
+                )
+                new_summaries.append(summary)
+                new_scratchpadLines.append(f"Tool ({tool_name}): {json.dumps(tool_args)}\nResult: {str(result)[:500]}")
+
+            except Exception as e:
+                error_msg = f"Tool execution failed: {str(e)}"
+                new_scratchpadLines.append(f"Tool Error ({tool_name}): {error_msg}")
+
+        return {
+            "summaries": new_summaries,
+            "scratchpad": state["scratchpad"] + "\n" + "\n".join(new_scratchpadLines)
+        }
+
+    async def _generate_final_answer(self, state: AgentState) -> Dict[str, Any]:
+        """Node: Synthesize final answer."""
+        query = state["query"]
+        scratchpad = state["scratchpad"]
+        summaries = state["summaries"]
+        last_thought = state["messages"][-1].content
+
+        final_prompt = build_final_answer_prompt(query, scratchpad, summaries, last_thought)
+        actual_messages = [SystemMessage(content=self.system_prompt)] + state["messages"] + [HumanMessage(content=final_prompt)]
+
+        response = await asyncio.to_thread(self.llm.invoke, actual_messages)
+        final_answer = response.content if hasattr(response, "content") else str(response)
+
+        return {"final_answer": final_answer}
+
+    def _should_continue(self, state: AgentState) -> str:
+        """Edge logic: Check if we need more tools or if we are done."""
+        if state["iteration"] >= self.max_iterations:
+            return "end"
+
+        last_message = state["messages"][-1]
+        response_text = last_message.content
+        tool_calls = self._parse_tool_calls(response_text)
+
+        if tool_calls:
+            return "tools"
+        return "final"
 
     @staticmethod
     def create(config: AgentConfig = None) -> "Agent":
@@ -54,7 +190,6 @@ class Agent:
         if config is None:
             config = AgentConfig()
 
-        # Initialize tools
         financial_tool = FinancialSearchTool()
         web_tool = WebSearchTool()
 
@@ -73,8 +208,6 @@ class Agent:
             ),
         ]
 
-        # Add web search if API key is available
-        import os
         if os.getenv("TAVILY_API_KEY"):
             tools.append(
                 StructuredTool(
@@ -93,31 +226,10 @@ class Agent:
         query: str,
         chat_history: Optional[List[Dict[str, str]]] = None,
     ) -> AsyncGenerator[AgentEvent, None]:
-        """
-        Run the agent and yield events for real-time UI updates.
-
-        Args:
-            query: The user's query
-            chat_history: Optional conversation history
-
-        Yields:
-            AgentEvent instances for real-time updates
-        """
-        if not self.tools:
-            yield DoneEvent(
-                answer="No tools available. Please check your API key configuration.",
-                tool_calls=[],
-                iterations=0,
-            )
-            return
-
-        all_tool_calls: List[Dict[str, Any]] = []
-        all_summaries: List[ToolSummary] = []
-        messages: List[Any] = []
-
-        # Build initial messages
-        messages.append(SystemMessage(content=self.system_prompt))
-
+        """Run the agent and stream events via LangGraph."""
+        
+        # Convert chat history to messages
+        messages = []
         if chat_history:
             for item in chat_history:
                 if item.get("role") == "user":
@@ -125,161 +237,77 @@ class Agent:
                 elif item.get("role") == "assistant":
                     messages.append(AIMessage(content=item.get("content", "")))
 
-        messages.append(HumanMessage(content=query))
+        initial_state = {
+            "messages": messages,
+            "query": query,
+            "scratchpad": f"Query: {query}\n",
+            "summaries": [],
+            "iteration": 0,
+            "final_answer": None
+        }
 
-        iteration = 0
-        scratchpad = f"Query: {query}\n"
+        # Stream the graph execution
+        # We manually yield events based on graph transitions
+        last_iteration = 0
+        all_tool_calls = []
 
-        while iteration < self.max_iterations:
-            iteration += 1
+        try:
+            async for event in self.graph.astream_events(initial_state, version="v2"):
+                kind = event["event"]
+                
+                if kind == "on_chain_end":
+                    # Detect node completions
+                    node_name = event.get("metadata", {}).get("langgraph_node")
+                    if not node_name:
+                        continue
+                        
+                    data = event["data"]["output"]
+                    if not data or not isinstance(data, dict):
+                        continue
 
-            # Check for abort signal
-            if self.signal and self.signal.is_set():
-                yield DoneEvent(
-                    answer="Agent execution cancelled.",
-                    tool_calls=all_tool_calls,
-                    iterations=iteration,
-                )
-                return
+                    if node_name == "call_model":
+                        last_iteration = data.get("iteration", last_iteration)
+                        last_msg = data["messages"][-1].content
+                        yield LogEvent(message=f"Agent Thinking (Iteration {last_iteration})...", level="thought")
+                        yield LogEvent(message=last_msg, level="thought")
+                        
+                        # Check for tool calls to inform UI
+                        tool_calls = self._parse_tool_calls(last_msg)
+                        for tc in tool_calls:
+                            all_tool_calls.append(tc)
+                            yield LogEvent(message=f"Planning to use {tc.get('tool')} with {json.dumps(tc.get('args'))}", level="tool")
 
-            # Build iteration prompt
-            iteration_prompt = build_iteration_prompt(
-                query, scratchpad, all_summaries
-            )
-            messages[-1] = HumanMessage(content=iteration_prompt)
+                    elif node_name == "execute_tools":
+                        for summary in data.get("summaries", []):
+                            yield ToolStartEvent(tool=summary.tool, args=summary.args)
+                            yield ToolEndEvent(tool=summary.tool, result=summary.result[:500])
+                            yield LogEvent(message=f"Tool {summary.tool} returned {len(summary.result)} characters", level="info")
 
-            # Call LLM
-            yield LogEvent(message=f"Agent Thinking (Iteration {iteration})...", level="thought")
-            try:
-                response = await asyncio.to_thread(
-                    self.llm.invoke, messages
-                )
-            except Exception as e:
-                yield ToolErrorEvent(tool="llm", error=str(e))
-                continue
-
-            # Extract text and check for tool calls
-            response_text = response.content if hasattr(response, "content") else str(response)
-            messages.append(AIMessage(content=response_text))
-            
-            # Emit thought log
-            yield LogEvent(message=response_text, level="thought")
-
-            # Parse tool calls from response
-            tool_calls = self._parse_tool_calls(response_text)
-
-            if not tool_calls:
-                # No more tool calls, generate final answer
-                yield LogEvent(message="Gathered sufficient info. Generating final answer...", level="info")
-                yield AnswerStartEvent()
-
-                final_prompt = build_final_answer_prompt(
-                    query, scratchpad, all_summaries, response_text
-                )
-                messages[-1] = HumanMessage(content=final_prompt)
-
-                try:
-                    final_response = await asyncio.to_thread(
-                        self.llm.invoke, messages
-                    )
-                except Exception as e:
-                    yield ToolErrorEvent(tool="final_answer", error=str(e))
-                    yield DoneEvent(
-                        answer=f"Error generating final answer: {str(e)}",
-                        tool_calls=all_tool_calls,
-                        iterations=iteration,
-                    )
-                    return
-
-                final_answer = (
-                    final_response.content
-                    if hasattr(final_response, "content")
-                    else str(final_response)
-                )
-
-                # Stream answer chunks
-                for chunk in final_answer.split(" "):
-                    yield AnswerChunkEvent(chunk=chunk + " ")
-
-                yield DoneEvent(
-                    answer=final_answer,
-                    tool_calls=all_tool_calls,
-                    iterations=iteration,
-                )
-                return
-
-            # Execute tool calls
-            for tool_call in tool_calls:
-                tool_name = tool_call.get("tool", "")
-                tool_args = tool_call.get("args", {})
-
-                yield LogEvent(message=f"Planning to use {tool_name} with {json.dumps(tool_args)}", level="tool")
-                yield ToolStartEvent(tool=tool_name, args=tool_args)
-
-                if tool_name not in self.tool_map:
-                    error_msg = f"Unknown tool: {tool_name}"
-                    yield ToolErrorEvent(tool=tool_name, error=error_msg)
-                    scratchpad += f"\nTool Error ({tool_name}): {error_msg}"
-                    continue
-
-                try:
-                    tool = self.tool_map[tool_name]
-                    result = await asyncio.to_thread(
-                        tool.func, **tool_args
-                    )
-
-                    yield ToolEndEvent(tool=tool_name, result=str(result)[:500])
-                    yield LogEvent(message=f"Tool {tool_name} returned {len(str(result))} characters", level="info")
-
-                    # Record tool call
-                    all_tool_calls.append(tool_call)
-
-                    # Create summary
-                    summary = ToolSummary(
-                        tool=tool_name,
-                        args=tool_args,
-                        result=str(result)[:1000],
-                        timestamp=datetime.now().isoformat(),
-                    )
-                    all_summaries.append(summary)
-
-                    scratchpad += f"\nTool ({tool_name}): {json.dumps(tool_args)}\nResult: {str(result)[:500]}"
-
-                except Exception as e:
-                    error_msg = f"Tool execution failed: {str(e)}"
-                    yield ToolErrorEvent(tool=tool_name, error=error_msg)
-                    scratchpad += f"\nTool Error ({tool_name}): {error_msg}"
-
-        # Max iterations reached
-        yield DoneEvent(
-            answer="Maximum iterations reached. Unable to complete the research.",
-            tool_calls=all_tool_calls,
-            iterations=iteration,
-        )
-
+                    elif node_name == "generate_final_answer":
+                        yield AnswerStartEvent()
+                        final_answer = data["final_answer"]
+                        # For CLI/TUI consistency, we could split by words but split by lines is safer
+                        for chunk in final_answer.split(" "):
+                            yield AnswerChunkEvent(chunk=chunk + " ")
+                        
+                        yield DoneEvent(
+                            answer=final_answer,
+                            iterations=last_iteration,
+                            tool_calls=all_tool_calls
+                        )
+        except Exception as e:
+            yield ToolErrorEvent(tool="agent", error=str(e))
+            yield DoneEvent(answer=f"An error occurred: {str(e)}", iterations=last_iteration)
+        
     def _parse_tool_calls(self, response_text: str) -> List[Dict[str, Any]]:
-        """
-        Parse tool calls from LLM response.
-
-        Args:
-            response_text: The LLM response text
-
-        Returns:
-            List of tool calls with name and arguments
-        """
+        """Parse tool calls from LLM response."""
         tool_calls = []
-
-        # Look for tool calls in format: <tool_call>{"tool": "name", "args": {...}}</tool_call>
-        import re
-
         pattern = r"<tool_call>(.*?)</tool_call>"
         matches = re.findall(pattern, response_text, re.DOTALL)
-
         for match in matches:
             try:
                 tool_call = json.loads(match)
                 tool_calls.append(tool_call)
             except json.JSONDecodeError:
                 continue
-
         return tool_calls

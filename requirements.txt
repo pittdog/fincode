@@ -4,6 +4,7 @@ langchain
 langchain-openai
 langchain-anthropic
 langchain-google-genai
+langgraph
 pydantic
 httpx
 requests

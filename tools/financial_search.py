@@ -80,22 +80,10 @@ class FinancialSearchTool:
         try:
             if self.provider == "massive":
                 # Massive/Polygon Financials API: /vX/reference/financials
-                # Normalizing statement types for Polygon
-                # Polygon uses: income_statement, balance_sheet, cash_flow_statement
-                ptype = statement_type.lower()
-                if "income" in ptype:
-                    type_query = "income_statement"
-                elif "balance" in ptype:
-                    type_query = "balance_sheet"
-                elif "cash" in ptype:
-                    type_query = "cash_flow_statement"
-                else:
-                    type_query = ptype
-
+                # We fetch the latest filing and extract the specific statement type
                 params = {
                     "ticker": ticker.upper(),
-                    "type": type_query,
-                    "periodicity": period,
+                    "periodicity": period, # annual or quarterly
                     "apiKey": self.api_key,
                     "limit": 1
                 }
@@ -104,6 +92,36 @@ class FinancialSearchTool:
                     f"{self.base_url}/vX/reference/financials",
                     params=params,
                 )
+                response.raise_for_status()
+                data = response.json()
+                
+                if "results" in data and len(data["results"]) > 0:
+                    result = data["results"][0]
+                    financials = result.get("financials", {})
+                    
+                    # Map statement_type to Massive keys
+                    ptype = statement_type.lower()
+                    mkey = None
+                    if "income" in ptype:
+                        mkey = "income_statement"
+                    elif "balance" in ptype:
+                        mkey = "balance_sheet"
+                    elif "cash" in ptype:
+                        mkey = "cash_flow_statement"
+                    
+                    if mkey and mkey in financials:
+                        # Add some metadata about the filing
+                        output = financials[mkey]
+                        if isinstance(output, dict):
+                            output["_metadata"] = {
+                                "ticker": result.get("tickers", [ticker])[0],
+                                "fiscal_period": result.get("fiscal_period"),
+                                "fiscal_year": result.get("fiscal_year"),
+                                "end_date": result.get("end_date")
+                            }
+                        return json.dumps(output)
+                    return json.dumps(financials) # Fallback to all if key mismatch
+                return json.dumps({"error": f"No financials found for {ticker}"})
             else:
                 # Financial Datasets API
                 params = {
