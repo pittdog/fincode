@@ -117,6 +117,21 @@ class CommandProcessor:
             self.console.print(f"[red]Error:[/red] {data['error']}")
             return
 
+        # Special handling for News results to quote sources and provider
+        if isinstance(data, dict) and "results" in data and "provider" in data:
+            self.console.print(f"\n[bold green]Provider: {data['provider']}[/bold green]")
+            for item in data["results"]:
+                title_text = item.get("title", "No Title")
+                summary = item.get("summary", item.get("content", ""))
+                source = item.get("source", item.get("url", "N/A"))
+                
+                self.console.print(Panel(
+                    f"{summary}\n\n[bold italic]Source:[/bold italic] {source}",
+                    title=f"[bold]{title_text}[/bold]",
+                    border_style="blue"
+                ))
+            return
+
         pretty_json = json.dumps(data, indent=2)
         panel = Panel(
             Syntax(pretty_json, "json", theme="monokai", word_wrap=True),

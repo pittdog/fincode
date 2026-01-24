@@ -130,6 +130,24 @@ Try asking FinCode questions like:
 - "Analyze Tesla's cash flow trends over the past year"
 - "What is Amazon's debt-to-equity ratio based on recent financials?"
 
+## Global Shortcuts (Direct Commands)
+
+The CLI supports fast, "bash-style" direct commands that bypass the AI agent for instant data access.
+
+| Command | Description | Speed |
+|---------|-------------|-------|
+| `load <ticker>` | Direct profile lookup via Massive API | **Instant** |
+| `news [ticker]` | Direct news lookup via Tavily | **Instant** |
+| `financials [ticker]`| Direct income statement retrieval | **Instant** |
+| `quote [ticker]` | Quick market data snapshot | **Instant** |
+| `reset`, `r`, `..` | Reset context/ticker | - |
+| `help`, `h`, `?` | Displays help menu | - |
+| `cls` | Clear screen | - |
+| `exit`, `q` | Quit application | - |
+
+> [!TIP]
+> Use `load AAPL` to set the context, then simply type `news` or `financials` for instant results. Any other input will be handled by the full AI Research Agent (LangGraph) for deep analysis.
+
 ## Architecture
 
 FinCode uses a modular architecture built on **LangGraph** for robust state management and deterministic agentic flows.
@@ -185,30 +203,27 @@ graph TD
 ```
 fincode/
 ├── agent/
-│   ├── agent.py          # Core ReAct agent
+│   ├── agent.py          # Core LangGraph orchestrator
 │   ├── types.py          # Type definitions
 │   ├── prompts.py        # Prompt templates
+│   ├── tools/            # Modular tools (Financials, News, etc.)
 │   └── __init__.py
 ├── model/
 │   ├── llm.py            # Multi-provider LLM abstraction
 │   └── __init__.py
-├── tools/
-│   ├── financial_search.py # Financial and web search tools
-│   └── __init__.py
 ├── components/
 │   ├── app.py            # Textual UI application
 │   ├── cli.py            # CLI UI application
+│   ├── command_processor.py # Direct command handling
 │   └── __init__.py
 ├── fincode_tui.py        # TUI entry point
 ├── fincode_cli.py        # CLI entry point
-├── test-results/
-│   ├── xai_integration_test.json
-│   └── comprehensive_test_results.json
 ├── tests/
-│   └── test_xai_integration.py   # Integration tests
+│   ├── test_agent_smoke.py   # Runtime verification
+│   ├── fincode_cli_test.py   # CLI reproduction test
+│   └── massive_test.py       # API provider test
 ├── requirements.txt          # Python dependencies
-├── .env.example             # Example environment configuration
-├── .env                     # Environment configuration (with XAI key)
+├── .env                     # Environment configuration
 └── README.md                # This file
 ```
 
