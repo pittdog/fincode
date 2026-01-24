@@ -1,14 +1,8 @@
-"""Main Textual application for FinCode."""
-import asyncio
-from typing import Optional
-from textual.app import ComposeResult, on
-from textual.containers import Container, Vertical, Horizontal
-from textual.widgets import Header, Footer, Static, Input, RichLog, Label
+from textual.app import App, ComposeResult, on
+from textual.containers import Vertical, Horizontal
+from textual.widgets import Header, Footer, Input, Markdown, Static, Label
 from textual.binding import Binding
-from rich.text import Text
-from rich.panel import Panel
 from rich.console import Console
-from rich.markdown import Markdown
 
 from agent.agent import Agent
 from agent.types import (
@@ -17,138 +11,137 @@ from agent.types import (
 )
 
 
-class IntroPanel(Static):
-    """Introduction panel showing current model and status."""
+class StatusPanel(Static):
+    """Status panel showing current tool execution."""
+    
+    def update_status(self, message: str) -> None:
+        self.update(f"[bold yellow]Status:[/bold yellow] {message}")
 
-    def __init__(self, model: str, provider: str):
+
+class FinCodeApp(App):
+    """Full Textual TUI application for FinCode."""
+
+    CSS = """
+    Screen {
+        background: $surface;
+    }
+
+    #main_container {
+        height: 1fr;
+        padding: 1;
+    }
+
+    #result_view {
+        height: 1fr;
+        border: solid $accent;
+        padding: 1;
+        overflow-y: scroll;
+    }
+
+    #status_bar {
+        height: 3;
+        padding: 1;
+        background: $surface-lighten-1;
+        color: $text;
+        border-top: solid $primary;
+    }
+
+    #input_container {
+        height: auto;
+        dock: bottom;
+        padding: 1;
+    }
+
+    Input {
+        border: tall $primary;
+    }
+    """
+
+    BINDINGS = [
+        Binding("q", "quit", "Quit", show=True),
+        Binding("ctrl+c", "quit", "Quit", show=False),
+        Binding("ctrl+l", "clear_results", "Clear Results", show=True),
+    ]
+
+    def __init__(self, model: str = "grok-3", provider: str = "xai"):
         super().__init__()
-        self.model = model
-        self.provider = provider
-
-    def render(self) -> Panel:
-        """Render the intro panel."""
-        intro_text = f"""[bold cyan]FinCode[/bold cyan] - Financial Research Agent
-
-[yellow]Model:[/yellow] {self.model}
-[yellow]Provider:[/yellow] {self.provider}
-
-Type your financial research query and press Enter.
-Use [bold]/model[/bold] to change models, [bold]exit[/bold] to quit."""
-
-        return Panel(intro_text, title="[bold]Welcome[/bold]")
-
-
-class QueryInput(Input):
-    """Input widget for user queries."""
-
-    def __init__(self):
-        super().__init__(id="query_input")
-        self.history: list[str] = []
-        self.history_index = -1
-
-    def action_history_up(self) -> None:
-        """Navigate up in history."""
-        if self.history and self.history_index < len(self.history) - 1:
-            self.history_index += 1
-            self.value = self.history[-(self.history_index + 1)]
-
-    def action_history_down(self) -> None:
-        """Navigate down in history."""
-        if self.history_index > 0:
-            self.history_index -= 1
-            self.value = self.history[-(self.history_index + 1)]
-        elif self.history_index == 0:
-            self.history_index = -1
-            self.value = ""
-
-    def add_to_history(self, query: str) -> None:
-        """Add query to history."""
-        self.history.insert(0, query)
-        self.history_index = -1
-
-
-class OutputLog(RichLog):
-    """Output log for displaying results."""
-
-    def __init__(self):
-        super().__init__(id="output_log")
-
-
-class FinCodeApp:
-    """Main FinCode application."""
-
-    def __init__(self, model: str = "gpt-4.1-mini", provider: str = "openai"):
-        self.model = model
+        self.model_name = model
         self.provider = provider
         self.agent: Optional[Agent] = None
         self.chat_history: list[dict] = []
-        self.is_processing = False
-        self.console = Console()
+        self.full_answer = ""
 
-    async def initialize(self):
-        """Initialize the agent."""
-        config = AgentConfig(model=self.model, model_provider=self.provider)
+    def compose(self) -> ComposeResult:
+        yield Header()
+        with Vertical(id="main_container"):
+            yield Static(f"[bold cyan]FinCode[/bold cyan] | Agentic Financial Research | [yellow]{self.model_name}[/yellow]", id="intro")
+            yield Markdown("", id="result_view")
+        yield StatusPanel("Ready", id="status_bar")
+        with Horizontal(id="input_container"):
+            yield Input(placeholder="Ask a financial research question...", id="query_input")
+        yield Footer()
+
+    async def on_mount(self) -> None:
+        """Initialize the agent when the app starts."""
+        config = AgentConfig(model=self.model_name, model_provider=self.provider)
         self.agent = Agent.create(config)
+        self.query_one("#query_input").focus()
 
-    async def process_query(self, query: str) -> str:
-        """Process a user query and return the answer."""
-        if not self.agent:
-            return "Agent not initialized"
+    @on(Input.Submitted)
+    async def handle_query(self, event: Input.Submitted) -> None:
+        """Process the user query."""
+        query = event.value.strip()
+        if not query:
+            return
 
+        # Reset UI for new query
+        input_widget = self.query_one("#query_input", Input)
+        status_panel = self.query_one("#status_bar", StatusPanel)
+        markdown_view = self.query_one("#result_view", Markdown)
+        
+        input_widget.value = ""
+        # input_widget.disabled = True  <- Remove this to allow user to type/quit while researching
+        self.full_answer = ""
+        self.research_log = f"# Research: {query}\n\n"
+        markdown_view.update(self.research_log)
+        
+        status_panel.update_status(f"Starting research: '{query}'...")
         self.chat_history.append({"role": "user", "content": query})
-        answer = ""
 
-        async for event in self.agent.run(query, self.chat_history):
-            if isinstance(event, ToolStartEvent):
-                self.console.print(f"🔧 Using [bold cyan]{event.tool}[/bold cyan]...")
-            elif isinstance(event, ToolEndEvent):
-                self.console.print(f"✓ [bold green]{event.tool}[/bold green] completed")
-            elif isinstance(event, AnswerChunkEvent):
-                answer += event.chunk
-            elif isinstance(event, DoneEvent):
-                answer = event.answer
+        try:
+            async for agent_event in self.agent.run(query, self.chat_history):
+                if isinstance(agent_event, LogEvent):
+                    if agent_event.level == "thought":
+                        self.research_log += f"\n> [italic]Thought: {agent_event.message.strip()}[/italic]\n"
+                    elif agent_event.level == "tool":
+                        self.research_log += f"\n🔧 **Action**: {agent_event.message}\n"
+                    else:
+                        self.research_log += f"\nℹ️ {agent_event.message}\n"
+                    markdown_view.update(self.research_log)
+                
+                elif isinstance(agent_event, ToolStartEvent):
+                    status_panel.update_status(f"🔧 Using {agent_event.tool}...")
+                elif isinstance(agent_event, ToolEndEvent):
+                    status_panel.update_status(f"✓ {agent_event.tool} completed")
+                elif isinstance(agent_event, AnswerChunkEvent):
+                    if "## Final Answer" not in self.research_log:
+                        self.research_log += "\n---\n## Final Answer\n\n"
+                    self.full_answer += agent_event.chunk
+                    markdown_view.update(self.research_log + self.full_answer)
+                elif isinstance(agent_event, DoneEvent):
+                    status_panel.update_status("Task Complete")
+                    self.chat_history.append({"role": "assistant", "content": agent_event.answer})
+                    markdown_view.update(self.research_log + "\n---\n## Final Answer\n\n" + agent_event.answer)
 
-        self.chat_history.append({"role": "assistant", "content": answer})
-        return answer
+        except Exception as e:
+            self.notify(f"Error: {str(e)}", severity="error")
+            status_panel.update_status(f"Error: {str(e)}")
+        finally:
+            input_widget.disabled = False
+            input_widget.focus()
 
-    async def run(self):
-        """Run the application."""
-        await self.initialize()
-
-        self.console.print("\n[bold cyan]FinCode[/bold cyan] - Financial Research Agent")
-        self.console.print(f"[yellow]Model:[/yellow] {self.model}")
-        self.console.print(f"[yellow]Provider:[/yellow] {self.provider}")
-        self.console.print("\nType your financial research query and press Enter.")
-        self.console.print("Use [bold]/model[/bold] to change models, [bold]exit[/bold] to quit.\n")
-
-        while True:
-            try:
-                query = self.console.input("[bold green]You:[/bold green] ").strip()
-
-                if not query:
-                    continue
-
-                if query.lower() in ["exit", "quit"]:
-                    self.console.print("[yellow]Goodbye![/yellow]")
-                    break
-
-                if query == "/model":
-                    self.console.print("[red]Model selection not yet implemented in CLI mode[/red]")
-                    continue
-
-                self.console.print("\n[yellow]Researching...[/yellow]")
-                self.is_processing = True
-
-                answer = await self.process_query(query)
-
-                self.console.print("\n[bold cyan]FinCode:[/bold cyan]")
-                self.console.print(Markdown(answer))
-                self.console.print("")
-                self.is_processing = False
-
-            except KeyboardInterrupt:
-                self.console.print("\n\n[yellow]Goodbye![/yellow]")
-                break
-            except Exception as e:
-                self.console.print(f"[red]Error: {str(e)}[/red]")
-                self.is_processing = False
+    def action_clear_results(self) -> None:
+        """Clear the results view."""
+        self.query_one("#result_view", Markdown).update("")
+        self.chat_history = []
+        self.notify("History cleared")

@@ -52,6 +52,14 @@ class AnswerChunkEvent:
 
 
 @dataclass
+class LogEvent:
+    """Event emitted for logging thought or activity."""
+    type: Literal["log"] = "log"
+    message: str = ""
+    level: str = "info"  # info, thought, tool, error
+
+
+@dataclass
 class DoneEvent:
     """Event emitted when the agent finishes."""
     type: Literal["done"] = "done"
@@ -67,6 +75,7 @@ AgentEvent = (
     | AnswerStartEvent
     | AnswerChunkEvent
     | DoneEvent
+    | LogEvent
 )
 
 

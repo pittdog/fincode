@@ -15,6 +15,7 @@ from agent.types import (
     AnswerStartEvent,
     AnswerChunkEvent,
     DoneEvent,
+    LogEvent,
     ToolSummary,
 )
 from model.llm import LLMProvider
@@ -148,6 +149,7 @@ class Agent:
             messages[-1] = HumanMessage(content=iteration_prompt)
 
             # Call LLM
+            yield LogEvent(message=f"Agent Thinking (Iteration {iteration})...", level="thought")
             try:
                 response = await asyncio.to_thread(
                     self.llm.invoke, messages
@@ -159,12 +161,16 @@ class Agent:
             # Extract text and check for tool calls
             response_text = response.content if hasattr(response, "content") else str(response)
             messages.append(AIMessage(content=response_text))
+            
+            # Emit thought log
+            yield LogEvent(message=response_text, level="thought")
 
             # Parse tool calls from response
             tool_calls = self._parse_tool_calls(response_text)
 
             if not tool_calls:
                 # No more tool calls, generate final answer
+                yield LogEvent(message="Gathered sufficient info. Generating final answer...", level="info")
                 yield AnswerStartEvent()
 
                 final_prompt = build_final_answer_prompt(
@@ -207,6 +213,7 @@ class Agent:
                 tool_name = tool_call.get("tool", "")
                 tool_args = tool_call.get("args", {})
 
+                yield LogEvent(message=f"Planning to use {tool_name} with {json.dumps(tool_args)}", level="tool")
                 yield ToolStartEvent(tool=tool_name, args=tool_args)
 
                 if tool_name not in self.tool_map:
@@ -222,6 +229,7 @@ class Agent:
                     )
 
                     yield ToolEndEvent(tool=tool_name, result=str(result)[:500])
+                    yield LogEvent(message=f"Tool {tool_name} returned {len(str(result))} characters", level="info")
 
                     # Record tool call
                     all_tool_calls.append(tool_call)

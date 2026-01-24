@@ -94,10 +94,16 @@ TAVILY_API_KEY=your-tavily-api-key
 
 ## Usage
 
-Run the agent in interactive mode:
+Run the agent in your preferred mode:
 
+**Option 1: Full Textual TUI (Recommended)**
 ```bash
-python3 main.py
+python3 fincode_tui.py
+```
+
+**Option 2: Simple CLI**
+```bash
+python3 fincode_cli.py
 ```
 
 Or run tests:
@@ -132,10 +138,10 @@ fincode/
 │   └── __init__.py
 ├── components/
 │   ├── app.py            # Textual UI application
+│   ├── cli.py            # CLI UI application
 │   └── __init__.py
-├── utils/
-│   └── __init__.py
-├── main.py               # Entry point
+├── fincode_tui.py        # TUI entry point
+├── fincode_cli.py        # CLI entry point
 ├── test-results/
 │   ├── xai_integration_test.json
 │   └── comprehensive_test_results.json
@@ -179,7 +185,7 @@ Set the `MODEL` and `MODEL_PROVIDER` environment variables:
 ```bash
 export MODEL=grok-3
 export MODEL_PROVIDER=xai
-python3 main.py
+python3 fincode_tui.py  # or python3 fincode_cli.py
 ```
 
 ## Test Results
