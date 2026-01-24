@@ -12,12 +12,14 @@ from agent.types import (
 from components.command_processor import CommandProcessor
 
 
+import os
+
 class FinCodeCLI:
     """CLI application for FinCode."""
 
-    def __init__(self, model: str = "grok-3", provider: str = "xai"):
-        self.model = model
-        self.provider = provider
+    def __init__(self, model: Optional[str] = None, provider: Optional[str] = None):
+        self.model = model or os.getenv("MODEL", "grok-3")
+        self.provider = provider or os.getenv("MODEL_PROVIDER", "xai")
         self.agent: Optional[Agent] = None
         self.chat_history: List[Dict[str, str]] = []
         self.console = Console()

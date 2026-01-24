@@ -18,6 +18,8 @@ class StatusPanel(Static):
         self.update(f"[bold yellow]Status:[/bold yellow] {message}")
 
 
+import os
+
 class FinCodeApp(App):
     """Full Textual TUI application for FinCode."""
 
@@ -63,10 +65,10 @@ class FinCodeApp(App):
         Binding("ctrl+l", "clear_results", "Clear Results", show=True),
     ]
 
-    def __init__(self, model: str = "grok-3", provider: str = "xai"):
+    def __init__(self, model: Optional[str] = None, provider: Optional[str] = None):
         super().__init__()
-        self.model_name = model
-        self.provider = provider
+        self.model_name = model or os.getenv("MODEL", "grok-3")
+        self.provider = provider or os.getenv("MODEL_PROVIDER", "xai")
         self.agent: Optional[Agent] = None
         self.chat_history: list[dict] = []
         self.full_answer = ""

@@ -55,8 +55,8 @@ class Agent:
         system_prompt: str,
     ):
         """Initialize the agent."""
-        self.model = config.model or "gpt-4.1-mini"
-        self.model_provider = config.model_provider or "openai"
+        self.model = config.model or os.getenv("MODEL", "grok-3")
+        self.model_provider = config.model_provider or os.getenv("MODEL_PROVIDER", "xai")
         self.max_iterations = config.max_iterations or self.DEFAULT_MAX_ITERATIONS
         self.tools = tools
         self.tool_map = {tool.name: tool for tool in tools}

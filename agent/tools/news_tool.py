@@ -13,30 +13,36 @@ class NewsTool:
         self.tavily_url = "https://api.tavily.com/search"
         self.client = httpx.Client(timeout=30.0)
         
-        # Use provided LLM or initialize a fast Grok-3 instance if possible
+        # Use provided LLM or initialize a fast instance if possible
         self.llm = llm
-        if not self.llm and os.getenv("XAI_API_KEY"):
-            try:
-                self.llm = LLMProvider.get_model("grok-3", "xai", temperature=0.1)
-            except:
-                pass
+        if not self.llm:
+            model = os.getenv("MODEL", "grok-3")
+            provider = os.getenv("MODEL_PROVIDER", "xai")
+            if provider == "xai" and os.getenv("XAI_API_KEY"):
+                try:
+                    self.llm = LLMProvider.get_model(model, provider, temperature=0.1)
+                except:
+                    pass
 
     def get_news(self, query: str, max_results: int = 5) -> str:
         """
         Fetch news for a given query or ticker.
-        Tries xAI (Grok) first, then falls back to Tavily.
+        Tries xAI (Grok) first with real-time X search prompt, then falls back to Tavily.
         """
-        results = {"provider": "unknown", "news": []}
+        from pathlib import Path
 
-        # 1. Try xAI (Grok) - Fastest for real-time summaries with citations
+        # 1. Try xAI (Grok) - Using the markdown prompt
         if self.llm:
             try:
-                prompt = (
-                    f"You are a financial news assistant. Provide the latest news for {query}. "
-                    "For each news item, provide a brief summary and the source/link. "
-                    "Format as a JSON list of objects with 'title', 'summary', and 'source'. "
-                    "Only return the JSON list."
-                )
+                prompt_path = Path("agent/prompts/news_prompt.md")
+                if not prompt_path.exists():
+                    # Check absolute path relative to project root if necessary
+                    prompt_path = Path(__file__).parent.parent / "prompts" / "news_prompt.md"
+                
+                prompt_template = prompt_path.read_text()
+                current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                prompt = prompt_template.replace("{{current_time}}", current_time).replace("{{topic}}", query)
+                
                 response = self.llm.invoke(prompt)
                 content = response.content if hasattr(response, "content") else str(response)
                 
@@ -50,8 +56,9 @@ class NewsTool:
                 json_match = re.search(r"\[\s*\{.*\}\s*\]", content, re.DOTALL)
                 if json_match:
                     news_items = json.loads(json_match.group(0))
+                    provider_label = f"{os.getenv('MODEL_PROVIDER', 'xai').upper()} ({os.getenv('MODEL', 'grok-3')})"
                     return json.dumps({
-                        "provider": "xAI (Grok-3)",
+                        "provider": provider_label,
                         "ticker": query,
                         "timestamp": datetime.now().isoformat(),
                         "results": news_items

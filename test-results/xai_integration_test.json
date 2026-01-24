@@ -1,34 +1,33 @@
 {
-  "timestamp": "2026-01-24T13:59:20.333918",
+  "timestamp": "2026-01-24T20:14:06.578563",
   "tests": {
     "xai_connection": true,
     "agent_basic": true
   },
   "events": [
     {
-      "type": "ToolStartEvent",
-      "timestamp": "2026-01-24T13:59:17.748278",
-      "tool": "financial_search"
+      "type": "LogEvent",
+      "timestamp": "2026-01-24T20:14:03.200009"
     },
     {
-      "type": "ToolEndEvent",
-      "timestamp": "2026-01-24T13:59:18.215961",
-      "tool": "financial_search"
+      "type": "LogEvent",
+      "timestamp": "2026-01-24T20:14:03.200119"
     },
     {
-      "type": "ToolStartEvent",
-      "timestamp": "2026-01-24T13:59:19.852594",
-      "tool": "web_search"
+      "type": "LogEvent",
+      "timestamp": "2026-01-24T20:14:03.200249"
     },
     {
-      "type": "ToolEndEvent",
-      "timestamp": "2026-01-24T13:59:20.330544",
-      "tool": "web_search"
+      "type": "LogEvent",
+      "timestamp": "2026-01-24T20:14:06.576538"
     },
     {
-      "type": "DoneEvent",
-      "timestamp": "2026-01-24T13:59:20.330707",
-      "answer": "Maximum iterations reached. Unable to complete the research."
+      "type": "LogEvent",
+      "timestamp": "2026-01-24T20:14:06.576612"
+    },
+    {
+      "type": "LogEvent",
+      "timestamp": "2026-01-24T20:14:06.576736"
     }
   ]
 }

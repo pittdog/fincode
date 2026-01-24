@@ -124,9 +124,10 @@ class CommandProcessor:
                 title_text = item.get("title", "No Title")
                 summary = item.get("summary", item.get("content", ""))
                 source = item.get("source", item.get("url", "N/A"))
+                timestamp = item.get("timestamp", "N/A")
                 
                 self.console.print(Panel(
-                    f"{summary}\n\n[bold italic]Source:[/bold italic] {source}",
+                    f"{summary}\n\n[bold italic]Source:[/bold italic] {source}\n[bold italic]Time:[/bold italic] {timestamp}",
                     title=f"[bold]{title_text}[/bold]",
                     border_style="blue"
                 ))
