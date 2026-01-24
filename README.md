@@ -10,7 +10,7 @@ FinCode is an autonomous financial research agent that thinks, plans, and learns
 
 ### Interactive CLI
 ![CLI Query](img/cli_query.png)
-*Asking a complex financial research question*
+*Using news, financials, and quote tools*
 
 ![CLI Response](img/cli_response.png)
 *Agent reasoning and final answer*
