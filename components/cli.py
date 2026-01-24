@@ -9,6 +9,7 @@ from agent.types import (
     AgentConfig, AgentEvent, ToolStartEvent, ToolEndEvent,
     AnswerChunkEvent, DoneEvent, LogEvent
 )
+from components.command_processor import CommandProcessor
 
 
 class FinCodeCLI:
@@ -20,11 +21,13 @@ class FinCodeCLI:
         self.agent: Optional[Agent] = None
         self.chat_history: List[Dict[str, str]] = []
         self.console = Console()
+        self.cmd_processor: Optional[CommandProcessor] = None
 
     async def initialize(self):
         """Initialize the agent."""
         config = AgentConfig(model=self.model, model_provider=self.provider)
         self.agent = Agent.create(config)
+        self.cmd_processor = CommandProcessor(self.agent)
 
     async def process_query(self, query: str):
         """Process a user query and stream results to console."""
@@ -61,25 +64,35 @@ class FinCodeCLI:
 
         self.console.print("\n[bold cyan]FinCode CLI[/bold cyan] - Financial Research Agent")
         self.console.print(f"[yellow]Model:[/yellow] {self.model}")
-        self.console.print(f"[yellow]Provider:[/yellow] {self.provider}\n")
+        self.console.print(f"[yellow]Provider:[/yellow] {self.provider}")
+        self.console.print("Type 'help' for commands or ask a question.\n")
 
         while True:
             try:
-                query = self.console.input("[bold green]You:[/bold green] ").strip()
+                # Update prompt based on current ticker
+                ticker_display = f"({self.cmd_processor.current_ticker}) " if self.cmd_processor.current_ticker else ""
+                prompt = f"[bold green]{ticker_display}You:[/bold green] "
+                
+                user_input = self.console.input(prompt).strip()
 
-                if not query:
+                if not user_input:
                     continue
 
-                if query.lower() in ["exit", "quit"]:
-                    self.console.print("[yellow]Goodbye![/yellow]")
-                    break
-
-                self.console.print("\n[yellow]Researching...[/yellow]")
-                await self.process_query(query)
-                self.console.print("")
+                # Process command first
+                is_handled, agent_query = self.cmd_processor.process_command(user_input)
+                
+                if is_handled:
+                    continue
+                
+                if agent_query:
+                    self.console.print("\n[yellow]Researching...[/yellow]")
+                    await self.process_query(agent_query)
+                    self.console.print("")
 
             except KeyboardInterrupt:
                 self.console.print("\n\n[yellow]Goodbye![/yellow]")
                 break
             except Exception as e:
                 self.console.print(f"[red]Error: {str(e)}[/red]")
+                import traceback
+                traceback.print_exc()

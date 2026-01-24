@@ -24,7 +24,7 @@ from agent.types import (
     ToolSummary,
 )
 from model.llm import LLMProvider
-from tools.financial_search import FinancialSearchTool, WebSearchTool
+from agent.tools import FinancialsTool, TickerTool, NewsTool, WebSearchTool
 from agent.prompts import (
     build_system_prompt,
     build_iteration_prompt,
@@ -190,20 +190,28 @@ class Agent:
         if config is None:
             config = AgentConfig()
 
-        financial_tool = FinancialSearchTool()
+        financial_tool = FinancialsTool()
+        ticker_tool = TickerTool()
+        news_tool = NewsTool()
         web_tool = WebSearchTool()
 
         tools = [
             StructuredTool(
-                name="financial_search",
-                description="Search for financial data about companies",
-                func=financial_tool.search,
-                args_schema=None,
-            ),
-            StructuredTool(
                 name="get_financials",
                 description="Get financial statements for a company. Parameters: ticker (stock symbol, e.g. 'AAPL'), statement_type ('income', 'balance', or 'cash_flow'), and period ('annual' or 'quarterly').",
                 func=financial_tool.get_financials,
+                args_schema=None,
+            ),
+            StructuredTool(
+                name="get_ticker_details",
+                description="Get detailed information about a stock ticker symbol (e.g., AAPL).",
+                func=ticker_tool.get_ticker_details,
+                args_schema=None,
+            ),
+            StructuredTool(
+                name="get_news",
+                description="Get latest financial news for a company or topic.",
+                func=news_tool.get_news,
                 args_schema=None,
             ),
         ]
@@ -212,7 +220,7 @@ class Agent:
             tools.append(
                 StructuredTool(
                     name="web_search",
-                    description="Search the web for information",
+                    description="Search the web for general financial information",
                     func=web_tool.search,
                     args_schema=None,
                 )
