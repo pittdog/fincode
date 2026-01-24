@@ -7,7 +7,7 @@ from rich.console import Console
 from agent.agent import Agent
 from agent.types import (
     AgentConfig, AgentEvent, ToolStartEvent, ToolEndEvent, 
-    AnswerChunkEvent, DoneEvent
+    AnswerChunkEvent, DoneEvent, LogEvent
 )
 
 
