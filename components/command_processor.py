@@ -117,6 +117,69 @@ class CommandProcessor:
             self.console.print(f"[red]Error:[/red] {data['error']}")
             return
 
+        # Special handling for Ticker Profile / Quote
+        if isinstance(data, dict) and "market_cap" in data and "description" in data:
+            ticker = data.get("ticker", "N/A")
+            name = data.get("name", "N/A")
+            market_cap = f"${data['market_cap']:,}" if isinstance(data.get("market_cap"), (int, float)) else "N/A"
+            
+            # Extract price data if available
+            price = data.get("price_data", {})
+            day = price.get("day", {})
+            prev = price.get("prevDay", {})
+            
+            # Key Stats Table
+            stats = Table(show_header=False, box=None, padding=(0, 2))
+            
+            # Format price row if available
+            if day.get("c"):
+                current_price = f"${day['c']:.2f}"
+                change = price.get("todaysChange", 0)
+                change_perc = price.get("todaysChangePerc", 0)
+                color = "green" if change >= 0 else "red"
+                sign = "+" if change >= 0 else ""
+                stats.add_row("[bold cyan]Price:[/bold cyan]", f"[bold {color}]{current_price} ({sign}{change:.2f}, {sign}{change_perc:.2f}%)[/bold {color}]")
+
+            stats.add_row("[bold cyan]Previous Close:[/bold cyan]", f"${prev['c']:.2f}" if prev.get("c") else "N/A")
+            stats.add_row("[bold cyan]Open:[/bold cyan]", f"${day['o']:.2f}" if day.get("o") else "N/A")
+            
+            if day.get("l") and day.get("h"):
+                stats.add_row("[bold cyan]Day Range:[/bold cyan]", f"${day['l']:.2f} - ${day['h']:.2f}")
+
+            stats.add_row("[bold cyan]Market Cap:[/bold cyan]", market_cap)
+            
+            if day.get("v"):
+                stats.add_row("[bold cyan]Volume:[/bold cyan]", f"{day['v']:,}")
+
+            stats.add_row("[bold cyan]Exchange:[/bold cyan]", data.get("primary_exchange", "N/A"))
+            stats.add_row("[bold cyan]Website:[/bold cyan]", data.get("homepage_url", "N/A"))
+            
+            # Shared outstanding
+            shares = f"{data.get('share_class_shares_outstanding', 0):,}" if data.get("share_class_shares_outstanding") else "N/A"
+            stats.add_row("[bold cyan]Shares Out:[/bold cyan]", shares)
+            
+            updated_ts = price.get("updated")
+            if updated_ts:
+                # Convert nanoseconds to string
+                from datetime import datetime
+                try:
+                    ts = datetime.fromtimestamp(updated_ts / 1e9).strftime('%Y-%m-%d %H:%M:%S')
+                    stats.add_row("[bold cyan]Last Updated:[/bold cyan]", ts)
+                except:
+                    pass
+
+            self.console.print(f"\n[bold green]{name} ({ticker})[/bold green]")
+            self.console.print(Panel(stats, title="[bold]Market Data & Key Stats[/bold]", border_style="cyan"))
+            
+            self.console.print(Panel(
+                data.get("description", "No description available."),
+                title="[bold]Business Description[/bold]",
+                border_style="blue",
+                padding=(1, 2)
+            ))
+            self.console.print(f"[dim italic]Source: Massive[/dim italic]")
+            return
+
         # Special handling for News results to quote sources and provider
         if isinstance(data, dict) and "results" in data and "provider" in data:
             self.console.print(f"\n[bold green]Provider: {data['provider']}[/bold green]")
@@ -131,6 +194,30 @@ class CommandProcessor:
                     title=f"[bold]{title_text}[/bold]",
                     border_style="blue"
                 ))
+            return
+
+        # Special handling for Financials (Tabular)
+        if isinstance(data, dict) and any(k in data for k in ["revenues", "net_income_loss", "assets", "liabilities"]):
+            meta = data.pop("_metadata", {})
+            end_date = meta.get("end_date", "N/A")
+            period = f"{meta.get('fiscal_year', '')} {meta.get('fiscal_period', '')}".strip()
+            
+            table = Table(
+                title=f"[bold green]{title}[/bold green] (Cut-off: {end_date} | {period})",
+                show_header=True,
+                header_style="bold cyan"
+            )
+            table.add_column("Line Item", style="dim")
+            table.add_column("Value", justify="right")
+            
+            for key, val in data.items():
+                if isinstance(val, dict) and "value" in val:
+                    display_val = f"{val['value']:,}" if isinstance(val['value'], (int, float)) else str(val['value'])
+                    unit = val.get("unit", "")
+                    table.add_row(key.replace("_", " ").title(), f"{display_val} {unit}")
+            
+            self.console.print(table)
+            self.console.print(f"[dim italic]Source: Massive (Polygon)[/dim italic]")
             return
 
         pretty_json = json.dumps(data, indent=2)
@@ -148,8 +235,8 @@ class CommandProcessor:
         table.add_column("Speed", style="italic green")
 
         table.add_row("load <ticker>", "Direct profile lookup (Massive)", "Instant")
-        table.add_row("news [ticker]", "Direct news lookup (Tavily)", "Instant")
-        table.add_row("financials [ticker]", "Direct financials lookup (Polygon)", "Instant")
+        table.add_row("news [ticker]", "Direct news lookup (xAI/Grok)", "Instant")
+        table.add_row("financials [ticker]", "Direct financials lookup (Massive/Polygon)", "Instant")
         table.add_row("quote [ticker]", "Real-time quote data", "Instant")
         table.add_row("reset, r, ..", "Reset context/ticker", "-")
         table.add_row("help, h, ?", "Displays this menu", "-")
