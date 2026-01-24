@@ -159,7 +159,13 @@ graph TD
         CLI["fincode_cli.py (Rich)"]
     end
 
-    subgraph Core ["Core Agent Loop (LangGraph)"]
+    Router["CommandProcessor (Router)"]
+
+    subgraph FastPath ["Fast Path (Bash-style)"]
+        DirectExec["Direct Tool Execution"]
+    end
+
+    subgraph Core ["AI Agent Loop (LangGraph)"]
         Graph["StateGraph"]
         ModelNode["call_model node"]
         ToolNode["execute_tools node"]
@@ -172,23 +178,26 @@ graph TD
     end
 
     subgraph Tools ["Research Tools"]
-        FinDat["FinancialSearchTool (Massive / FinDatasets)"]
-        WebDat["WebSearchTool (Tavily)"]
+        FinTools["Financials / Ticker / Web"]
+        NewsTool["News (xAI + Tavily)"]
     end
 
     subgraph Providers ["LLM Providers"]
-        XAI["xAI (Grok-3)"]
-        OpenAI["OpenAI (GPT-4)"]
-        Anthropic["Anthropic (Claude)"]
-        Gemini["Google (Gemini)"]
+        XAI["xAI (Grok-4 / Grok-3)"]
+        Others["OpenAI / Claude / Gemini"]
     end
 
-    TUI <--> Graph
-    CLI <--> Graph
+    TUI --> Router
+    CLI --> Router
+
+    Router -->|Shortcut| DirectExec
+    Router -->|Query| Graph
+
+    DirectExec --> Tools
+    ToolNode --> Tools
     
     ModelNode <--> Providers
     FinalNode <--> Providers
-    ToolNode <--> Tools
 ```
 
 ### Key Components
