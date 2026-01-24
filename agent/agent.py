@@ -6,7 +6,7 @@ from datetime import datetime
 from langchain_core.tools import StructuredTool
 from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
 
-from src.agent.types import (
+from agent.types import (
     AgentConfig,
     AgentEvent,
     ToolStartEvent,
@@ -17,9 +17,9 @@ from src.agent.types import (
     DoneEvent,
     ToolSummary,
 )
-from src.model.llm import LLMProvider
-from src.tools.financial_search import FinancialSearchTool, WebSearchTool
-from src.agent.prompts import (
+from model.llm import LLMProvider
+from tools.financial_search import FinancialSearchTool, WebSearchTool
+from agent.prompts import (
     build_system_prompt,
     build_iteration_prompt,
     build_final_answer_prompt,

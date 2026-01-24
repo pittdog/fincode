@@ -7,9 +7,14 @@ from textual.widgets import Header, Footer, Static, Input, RichLog, Label
 from textual.binding import Binding
 from rich.text import Text
 from rich.panel import Panel
+from rich.console import Console
+from rich.markdown import Markdown
 
-from src.agent.agent import Agent
-from src.agent.types import AgentConfig, AgentEvent
+from agent.agent import Agent
+from agent.types import (
+    AgentConfig, AgentEvent, ToolStartEvent, ToolEndEvent, 
+    AnswerChunkEvent, DoneEvent
+)
 
 
 class IntroPanel(Static):
@@ -78,6 +83,7 @@ class FinCodeApp:
         self.agent: Optional[Agent] = None
         self.chat_history: list[dict] = []
         self.is_processing = False
+        self.console = Console()
 
     async def initialize(self):
         """Initialize the agent."""
@@ -93,16 +99,14 @@ class FinCodeApp:
         answer = ""
 
         async for event in self.agent.run(query, self.chat_history):
-            if isinstance(event, dict):
-                event_type = event.get("type")
-                if event_type == "tool_start":
-                    print(f"🔧 Using {event.get('tool')}...")
-                elif event_type == "tool_end":
-                    print(f"✓ {event.get('tool')} completed")
-                elif event_type == "answer_chunk":
-                    answer += event.get("chunk", "")
-                elif event_type == "done":
-                    answer = event.get("answer", "")
+            if isinstance(event, ToolStartEvent):
+                self.console.print(f"🔧 Using [bold cyan]{event.tool}[/bold cyan]...")
+            elif isinstance(event, ToolEndEvent):
+                self.console.print(f"✓ [bold green]{event.tool}[/bold green] completed")
+            elif isinstance(event, AnswerChunkEvent):
+                answer += event.chunk
+            elif isinstance(event, DoneEvent):
+                answer = event.answer
 
         self.chat_history.append({"role": "assistant", "content": answer})
         return answer
@@ -111,38 +115,40 @@ class FinCodeApp:
         """Run the application."""
         await self.initialize()
 
-        print("\n[bold cyan]FinCode[/bold cyan] - Financial Research Agent")
-        print(f"[yellow]Model:[/yellow] {self.model}")
-        print(f"[yellow]Provider:[/yellow] {self.provider}")
-        print("\nType your financial research query and press Enter.")
-        print("Use [bold]/model[/bold] to change models, [bold]exit[/bold] to quit.\n")
+        self.console.print("\n[bold cyan]FinCode[/bold cyan] - Financial Research Agent")
+        self.console.print(f"[yellow]Model:[/yellow] {self.model}")
+        self.console.print(f"[yellow]Provider:[/yellow] {self.provider}")
+        self.console.print("\nType your financial research query and press Enter.")
+        self.console.print("Use [bold]/model[/bold] to change models, [bold]exit[/bold] to quit.\n")
 
         while True:
             try:
-                query = input("You: ").strip()
+                query = self.console.input("[bold green]You:[/bold green] ").strip()
 
                 if not query:
                     continue
 
                 if query.lower() in ["exit", "quit"]:
-                    print("Goodbye!")
+                    self.console.print("[yellow]Goodbye![/yellow]")
                     break
 
                 if query == "/model":
-                    print("Model selection not yet implemented in CLI mode")
+                    self.console.print("[red]Model selection not yet implemented in CLI mode[/red]")
                     continue
 
-                print("\n[yellow]Researching...[/yellow]")
+                self.console.print("\n[yellow]Researching...[/yellow]")
                 self.is_processing = True
 
                 answer = await self.process_query(query)
 
-                print(f"\n[bold cyan]FinCode:[/bold cyan]\n{answer}\n")
+                self.console.print("\n[bold cyan]FinCode:[/bold cyan]")
+                self.console.print(Markdown(answer))
+                self.console.print("")
                 self.is_processing = False
 
             except KeyboardInterrupt:
-                print("\n\nGoodbye!")
+                self.console.print("\n\n[yellow]Goodbye![/yellow]")
                 break
             except Exception as e:
-                print(f"[red]Error: {str(e)}[/red]")
+                self.console.print(f"[red]Error: {str(e)}[/red]")
                 self.is_processing = False

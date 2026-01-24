@@ -1,5 +1,5 @@
 {
-  "timestamp": "2026-01-21T07:12:02.515237",
+  "timestamp": "2026-01-24T13:59:20.333918",
   "tests": {
     "xai_connection": true,
     "agent_basic": true
@@ -7,27 +7,27 @@
   "events": [
     {
       "type": "ToolStartEvent",
-      "timestamp": "2026-01-21T07:12:00.674414",
+      "timestamp": "2026-01-24T13:59:17.748278",
       "tool": "financial_search"
     },
     {
-      "type": "ToolErrorEvent",
-      "timestamp": "2026-01-21T07:12:00.674661",
+      "type": "ToolEndEvent",
+      "timestamp": "2026-01-24T13:59:18.215961",
       "tool": "financial_search"
     },
     {
       "type": "ToolStartEvent",
-      "timestamp": "2026-01-21T07:12:01.978357",
+      "timestamp": "2026-01-24T13:59:19.852594",
       "tool": "web_search"
     },
     {
       "type": "ToolEndEvent",
-      "timestamp": "2026-01-21T07:12:02.514354",
+      "timestamp": "2026-01-24T13:59:20.330544",
       "tool": "web_search"
     },
     {
       "type": "DoneEvent",
-      "timestamp": "2026-01-21T07:12:02.514439",
+      "timestamp": "2026-01-24T13:59:20.330707",
       "answer": "Maximum iterations reached. Unable to complete the research."
     }
   ]

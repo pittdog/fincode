@@ -31,11 +31,11 @@ Final Answer Synthesis
 
 ### Core Components
 
-- **Agent** (`src/agent/agent.py`): Main orchestrator implementing ReAct pattern
-- **LLMProvider** (`src/model/llm.py`): Multi-provider LLM abstraction
-- **Tools** (`src/tools/financial_search.py`): Financial and web search capabilities
-- **Events** (`src/agent/types.py`): Real-time event streaming for UI updates
-- **UI** (`src/components/app.py`): Textual framework for terminal interface
+- **Agent** (`agent/agent.py`): Main orchestrator implementing ReAct pattern
+- **LLMProvider** (`model/llm.py`): Multi-provider LLM abstraction
+- **Tools** (`tools/financial_search.py`): Financial and web search capabilities
+- **Events** (`agent/types.py`): Real-time event streaming for UI updates
+- **UI** (`components/app.py`): Textual framework for terminal interface
 
 ## Prerequisites
 
@@ -57,8 +57,17 @@ cd fincode
 ```
 
 2. Install dependencies:
+
+Option A: Using pip
 ```bash
 pip install -r requirements.txt
+```
+
+Option B: Using uv (Recommended for speed)
+```bash
+uv venv
+source .venv/bin/activate
+uv pip install -r requirements.txt
 ```
 
 3. Set up environment variables:
@@ -88,13 +97,13 @@ TAVILY_API_KEY=your-tavily-api-key
 Run the agent in interactive mode:
 
 ```bash
-python3 src/main.py
+python3 main.py
 ```
 
 Or run tests:
 
 ```bash
-python3 test_xai_integration.py
+python3 tests/test_xai_integration.py
 ```
 
 ## Example Queries
@@ -110,27 +119,28 @@ Try asking FinCode questions like:
 
 ```
 fincode/
-├── src/
-│   ├── agent/
-│   │   ├── agent.py          # Core ReAct agent
-│   │   ├── types.py          # Type definitions
-│   │   ├── prompts.py        # Prompt templates
-│   │   └── __init__.py
-│   ├── model/
-│   │   ├── llm.py            # Multi-provider LLM abstraction
-│   │   └── __init__.py
-│   ├── tools/
-│   │   ├── financial_search.py # Financial and web search tools
-│   │   └── __init__.py
-│   ├── components/
-│   │   ├── app.py            # Textual UI application
-│   │   └── __init__.py
-│   ├── main.py               # Entry point
+├── agent/
+│   ├── agent.py          # Core ReAct agent
+│   ├── types.py          # Type definitions
+│   ├── prompts.py        # Prompt templates
 │   └── __init__.py
+├── model/
+│   ├── llm.py            # Multi-provider LLM abstraction
+│   └── __init__.py
+├── tools/
+│   ├── financial_search.py # Financial and web search tools
+│   └── __init__.py
+├── components/
+│   ├── app.py            # Textual UI application
+│   └── __init__.py
+├── utils/
+│   └── __init__.py
+├── main.py               # Entry point
 ├── test-results/
 │   ├── xai_integration_test.json
 │   └── comprehensive_test_results.json
-├── test_xai_integration.py   # Integration tests
+├── tests/
+│   └── test_xai_integration.py   # Integration tests
 ├── requirements.txt          # Python dependencies
 ├── .env.example             # Example environment configuration
 ├── .env                     # Environment configuration (with XAI key)
@@ -169,7 +179,7 @@ Set the `MODEL` and `MODEL_PROVIDER` environment variables:
 ```bash
 export MODEL=grok-3
 export MODEL_PROVIDER=xai
-python3 src/main.py
+python3 main.py
 ```
 
 ## Test Results
@@ -177,7 +187,7 @@ python3 src/main.py
 Run the integration test suite:
 
 ```bash
-python3 test_xai_integration.py
+python3 tests/test_xai_integration.py
 ```
 
 Results are saved to `test-results/` directory in JSON format.
@@ -219,7 +229,7 @@ Results are saved to `test-results/` directory in JSON format.
 The implementation uses OpenAI-compatible API endpoint for xAI:
 
 ```python
-from src.model.llm import LLMProvider
+from model.llm import LLMProvider
 
 llm = LLMProvider.get_model(
     model="grok-3",

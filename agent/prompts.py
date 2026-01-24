@@ -1,6 +1,6 @@
 """Prompts for the agent."""
 from typing import List
-from src.agent.types import ToolSummary
+from agent.types import ToolSummary
 
 
 def build_system_prompt() -> str:

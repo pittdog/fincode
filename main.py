@@ -7,15 +7,13 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 # Add parent directory to path
-sys.path.insert(0, str(Path(__file__).parent.parent))
-
-from src.components.app import FinCodeApp
+from components.app import FinCodeApp
 
 
 async def main():
     """Main entry point."""
     # Load environment variables
-    env_path = Path(__file__).parent.parent / ".env"
+    env_path = Path(__file__).parent / ".env"
     if env_path.exists():
         load_dotenv(env_path)
 
