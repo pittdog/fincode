@@ -81,7 +81,7 @@ class FinCodeCLI:
                     continue
 
                 # Process command first
-                is_handled, agent_query = self.cmd_processor.process_command(user_input)
+                is_handled, agent_query = await self.cmd_processor.process_command(user_input)
                 
                 if is_handled:
                     continue

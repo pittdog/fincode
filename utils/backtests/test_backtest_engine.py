@@ -2,7 +2,7 @@
 import pytest
 from datetime import datetime, timedelta
 
-from utils.polymarket_backtest_util import (
+from utils.backtests.polymarket_backtest_util import (
     BacktestDataGenerator,
     BacktestEngine,
     BacktestReporter,

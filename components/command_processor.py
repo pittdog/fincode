@@ -16,7 +16,7 @@ class CommandProcessor:
         self.current_ticker: Optional[str] = None
         self.history: List[str] = []
 
-    def process_command(self, user_input: str) -> Tuple[bool, Optional[str]]:
+    async def process_command(self, user_input: str) -> Tuple[bool, Optional[str]]:
         """
         Processes a command directly if possible.
         Returns (is_handled, agent_query).
@@ -52,7 +52,7 @@ class CommandProcessor:
             self.current_ticker = ticker
             self.console.print(f"Loading [bold cyan]{ticker}[/bold cyan] details...")
             
-            result = self._exec_tool("get_ticker_details", ticker=ticker)
+            result = await self._exec_tool("get_ticker_details", ticker=ticker)
             self._display_data(f"{ticker} Profile", result)
             return True, None
 
@@ -63,7 +63,7 @@ class CommandProcessor:
                 return True, None
             self.console.print(f"Fetching news for [bold cyan]{ticker}[/bold cyan]...")
             
-            result = self._exec_tool("get_news", query=ticker)
+            result = await self._exec_tool("get_news", query=ticker)
             self._display_data(f"{ticker} News", result)
             return True, None
 
@@ -75,7 +75,7 @@ class CommandProcessor:
             
             # Default to income statement for quick view
             self.console.print(f"Fetching financials for [bold cyan]{ticker}[/bold cyan]...")
-            result = self._exec_tool("get_financials", ticker=ticker, statement_type="income")
+            result = await self._exec_tool("get_financials", ticker=ticker, statement_type="income")
             self._display_data(f"{ticker} Financials", result)
             return True, None
 
@@ -85,15 +85,63 @@ class CommandProcessor:
                  self.console.print("[red]Error: No ticker loaded/specified.[/red]")
                  return True, None
              self.console.print(f"Fetching quote for [bold cyan]{ticker}[/bold cyan]...")
-             result = self._exec_tool("get_ticker_details", ticker=ticker)
+             result = await self._exec_tool("get_ticker_details", ticker=ticker)
              self._display_data(f"{ticker} Quote", result)
              return True, None
+
+        # Polymarket Commands
+        elif cmd.startswith("poly:"):
+            if cmd == "poly:backtest":
+                subcmd = args[0] if args else "weather"
+                period = args[1] if len(args) > 1 else "week"
+                
+                self.console.print(f"[bold cyan]Running Polymarket Backtest: {subcmd} ({period})[/bold cyan]")
+                
+                try:
+                    import asyncio
+                    from utils.backtests.real_backtest_util import run_real_backtest
+                    
+                    # Ensure API keys are present
+                    tomorrow_io_key = os.getenv("TOMORROWIO_API_KEY")
+                    if not tomorrow_io_key:
+                        self.console.print("[red]Error: TOMORROWIO_API_KEY not set.[/red]")
+                        return True, None
+                    
+                    # Run the backtest (direct await for the async call)
+                    results = await run_real_backtest(
+                        tomorrow_io_key=tomorrow_io_key,
+                        output_dir="test-results"
+                    )
+                        
+                    self._display_data("Backtest Results", results)
+                except Exception as e:
+                    self.console.print(f"[red]Error running backtest: {e}[/red]")
+                return True, None
+
+            elif cmd == "poly:weather":
+                self.console.print(f"[bold cyan]Scanning Polymarket Weather Opportunities...[/bold cyan]")
+                # Place holder for wrapper.scan_weather_opportunities()
+                result = await self._exec_tool("scan_weather_opportunities")
+                self._display_data("Weather Opportunities", result)
+                return True, None
+
+            elif cmd == "poly:buy":
+                if len(args) < 2:
+                    self.console.print("[red]Error: Usage: poly:buy <amount> <market_id>[/red]")
+                    return True, None
+                amount = args[0]
+                market_id = args[1]
+                self.console.print(f"[bold cyan]Simulating Buy: {amount} on {market_id}[/bold cyan]")
+                # Place holder for wrapper.simulate_trade(...)
+                result = await self._exec_tool("simulate_polymarket_trade", amount=amount, market_id=market_id)
+                self._display_data("Trade Simulation", result)
+                return True, None
 
         # If it doesn't match a direct shortcut, it might be a complex command for the agent
         # or just a natural language question.
         return False, user_input
 
-    def _exec_tool(self, tool_name: str, **kwargs) -> Any:
+    async def _exec_tool(self, tool_name: str, **kwargs) -> Any:
         """Call a tool function directly from the agent's tool_map."""
         if tool_name not in self.agent.tool_map:
             return {"error": f"Tool {tool_name} not available"}
@@ -101,7 +149,11 @@ class CommandProcessor:
         try:
             tool = self.agent.tool_map[tool_name]
             # StructuredTool.func is the raw method
-            return tool.func(**kwargs)
+            import inspect
+            if inspect.iscoroutinefunction(tool.func):
+                return await tool.func(**kwargs)
+            else:
+                return tool.func(**kwargs)
         except Exception as e:
             return {"error": str(e)}
 
@@ -238,6 +290,9 @@ class CommandProcessor:
         table.add_row("news [ticker]", "Direct news lookup (xAI/Grok)", "Instant")
         table.add_row("financials [ticker]", "Direct financials lookup (Massive/Polygon)", "Instant")
         table.add_row("quote [ticker]", "Real-time quote data", "Instant")
+        table.add_row("poly:backtest [type] [period]", "Run Polymarket backtest (Real data)", "Slow")
+        table.add_row("poly:weather", "Scan for weather opportunities", "Instant")
+        table.add_row("poly:buy <amt> <id>", "Simulate CLOB buy trade", "Instant")
         table.add_row("reset, r, ..", "Reset context/ticker", "-")
         table.add_row("help, h, ?", "Displays this menu", "-")
         table.add_row("cls", "Clear screen", "-")

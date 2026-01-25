@@ -1,347 +1,128 @@
-"""Polymarket CLOB API client for real trade history."""
-import asyncio
-import httpx
+"""Polymarket CLOB API client for detailed market data and trade execution."""
+import os
 import logging
 from typing import List, Dict, Any, Optional
-from datetime import datetime, timedelta
-import json
+from py_clob_client.client import ClobClient
+from py_clob_client.clob_types import ApiCreds
+from dataclasses import dataclass
 
 logger = logging.getLogger(__name__)
 
+@dataclass
+class CLOBOrderBook:
+    """Detailed order book from CLOB."""
+    market_id: str
+    bids: List[Dict[str, Any]]
+    asks: List[Dict[str, Any]]
+    best_bid: float
+    best_ask: float
+    mid_price: float
+    spread: float
 
 class PolymarketCLOBClient:
-    """Client for Polymarket CLOB API to fetch real trade history."""
-    
-    # CLOB API endpoints
-    BASE_URL = "https://clob.polymarket.com"
-    
-    def __init__(self, api_key: Optional[str] = None):
+    """Level 2 client for interacting with Polymarket CLOB."""
+
+    def __init__(
+        self, 
+        host: str = "https://clob.polymarket.com",
+        key: Optional[str] = None,
+        api_key: Optional[str] = None,
+        secret: Optional[str] = None,
+        passphrase: Optional[str] = None,
+        chain_id: int = 137
+    ):
         """Initialize CLOB client.
         
         Args:
-            api_key: Optional API key for authenticated endpoints
+            host: CLOB host URL
+            key: Wallet private key for authentication
+            api_key: Polymarket API Key
+            secret: Polymarket API Secret
+            passphrase: Polymarket API Passphrase
+            chain_id: Polygon chain ID (137)
         """
-        self.api_key = api_key
-        self.client = httpx.AsyncClient(timeout=30)
-        self.headers = {}
+        self.host = host
+        self.key = key or os.getenv("POLYMARKET_PRIVATE_KEY")
+        self.api_key = api_key or os.getenv("POLYMARKET_API_KEY")
+        self.secret = secret or os.getenv("POLYMARKET_SECRET")
+        self.passphrase = passphrase or os.getenv("POLYMARKET_PASSPHRASE")
+        self.chain_id = chain_id
         
-        if api_key:
-            self.headers["Authorization"] = f"Bearer {api_key}"
-    
-    async def get_markets(
-        self,
-        search: Optional[str] = None,
-        limit: int = 100,
-        offset: int = 0,
-    ) -> List[Dict[str, Any]]:
-        """Get markets from CLOB API.
+        creds = None
+        if self.api_key and self.secret and self.passphrase:
+             creds = ApiCreds(
+                 api_key=self.api_key,
+                 api_secret=self.secret,
+                 api_passphrase=self.passphrase
+             )
         
-        Args:
-            search: Search query
-            limit: Number of markets to return
-            offset: Offset for pagination
-            
-        Returns:
-            List of markets
-        """
-        try:
-            url = f"{self.BASE_URL}/markets"
-            params = {
-                "limit": limit,
-                "offset": offset,
-            }
-            
-            if search:
-                params["search"] = search
-            
-            logger.info(f"Fetching markets from CLOB API: {url}")
-            response = await self.client.get(url, params=params, headers=self.headers)
-            response.raise_for_status()
-            
-            data = response.json()
-            markets = data.get("markets", []) if isinstance(data, dict) else data
-            
-            logger.info(f"Fetched {len(markets)} markets")
-            return markets
-        
-        except Exception as e:
-            logger.error(f"Error fetching markets: {e}")
-            return []
-    
-    async def get_market_by_id(self, market_id: str) -> Dict[str, Any]:
-        """Get specific market by ID.
-        
-        Args:
-            market_id: Market ID
-            
-        Returns:
-            Market data
-        """
-        try:
-            url = f"{self.BASE_URL}/markets/{market_id}"
-            
-            logger.info(f"Fetching market {market_id}")
-            response = await self.client.get(url, headers=self.headers)
-            response.raise_for_status()
-            
-            return response.json()
-        
-        except Exception as e:
-            logger.error(f"Error fetching market {market_id}: {e}")
-            return {}
-    
-    async def get_trades(
-        self,
-        market_id: Optional[str] = None,
-        limit: int = 100,
-        offset: int = 0,
-    ) -> List[Dict[str, Any]]:
-        """Get trades from CLOB API.
-        
-        Args:
-            market_id: Optional market ID to filter trades
-            limit: Number of trades to return
-            offset: Offset for pagination
-            
-        Returns:
-            List of trades
-        """
-        try:
-            url = f"{self.BASE_URL}/trades"
-            params = {
-                "limit": limit,
-                "offset": offset,
-            }
-            
-            if market_id:
-                params["market_id"] = market_id
-            
-            logger.info(f"Fetching trades from CLOB API")
-            response = await self.client.get(url, params=params, headers=self.headers)
-            response.raise_for_status()
-            
-            data = response.json()
-            trades = data.get("trades", []) if isinstance(data, dict) else data
-            
-            logger.info(f"Fetched {len(trades)} trades")
-            return trades
-        
-        except Exception as e:
-            logger.error(f"Error fetching trades: {e}")
-            return []
-    
-    async def get_orders(
-        self,
-        market_id: Optional[str] = None,
-        limit: int = 100,
-        offset: int = 0,
-    ) -> List[Dict[str, Any]]:
-        """Get orders from CLOB API.
-        
-        Args:
-            market_id: Optional market ID to filter orders
-            limit: Number of orders to return
-            offset: Offset for pagination
-            
-        Returns:
-            List of orders
-        """
-        try:
-            url = f"{self.BASE_URL}/orders"
-            params = {
-                "limit": limit,
-                "offset": offset,
-            }
-            
-            if market_id:
-                params["market_id"] = market_id
-            
-            logger.info(f"Fetching orders from CLOB API")
-            response = await self.client.get(url, params=params, headers=self.headers)
-            response.raise_for_status()
-            
-            data = response.json()
-            orders = data.get("orders", []) if isinstance(data, dict) else data
-            
-            logger.info(f"Fetched {len(orders)} orders")
-            return orders
-        
-        except Exception as e:
-            logger.error(f"Error fetching orders: {e}")
-            return []
-    
-    async def get_market_trades(
-        self,
-        market_id: str,
-        limit: int = 100,
-    ) -> List[Dict[str, Any]]:
-        """Get all trades for a specific market.
-        
-        Args:
-            market_id: Market ID
-            limit: Number of trades to return
-            
-        Returns:
-            List of trades for the market
-        """
-        try:
-            url = f"{self.BASE_URL}/markets/{market_id}/trades"
-            params = {"limit": limit}
-            
-            logger.info(f"Fetching trades for market {market_id}")
-            response = await self.client.get(url, params=params, headers=self.headers)
-            response.raise_for_status()
-            
-            data = response.json()
-            trades = data.get("trades", []) if isinstance(data, dict) else data
-            
-            logger.info(f"Fetched {len(trades)} trades for market {market_id}")
-            return trades
-        
-        except Exception as e:
-            logger.error(f"Error fetching trades for market {market_id}: {e}")
-            return []
-    
-    async def get_market_orderbook(self, market_id: str) -> Dict[str, Any]:
-        """Get order book for a specific market.
-        
-        Args:
-            market_id: Market ID
-            
-        Returns:
-            Order book data
-        """
-        try:
-            url = f"{self.BASE_URL}/markets/{market_id}/orderbook"
-            
-            logger.info(f"Fetching orderbook for market {market_id}")
-            response = await self.client.get(url, headers=self.headers)
-            response.raise_for_status()
-            
-            return response.json()
-        
-        except Exception as e:
-            logger.error(f"Error fetching orderbook for market {market_id}: {e}")
-            return {}
-    
-    async def get_historical_prices(
-        self,
-        market_id: str,
-        start_time: Optional[datetime] = None,
-        end_time: Optional[datetime] = None,
-    ) -> List[Dict[str, Any]]:
-        """Get historical prices for a market.
-        
-        Args:
-            market_id: Market ID
-            start_time: Start time for historical data
-            end_time: End time for historical data
-            
-        Returns:
-            List of historical price points
-        """
-        try:
-            url = f"{self.BASE_URL}/markets/{market_id}/prices"
-            params = {}
-            
-            if start_time:
-                params["start_time"] = start_time.isoformat()
-            if end_time:
-                params["end_time"] = end_time.isoformat()
-            
-            logger.info(f"Fetching historical prices for market {market_id}")
-            response = await self.client.get(url, params=params, headers=self.headers)
-            response.raise_for_status()
-            
-            data = response.json()
-            prices = data.get("prices", []) if isinstance(data, dict) else data
-            
-            logger.info(f"Fetched {len(prices)} price points")
-            return prices
-        
-        except Exception as e:
-            logger.error(f"Error fetching historical prices: {e}")
-            return []
-    
-    async def close(self):
-        """Close HTTP client."""
-        await self.client.aclose()
+        self.client = ClobClient(
+            host=self.host,
+            key=self.key,
+            creds=creds,
+            chain_id=self.chain_id
+        )
 
-
-async def fetch_real_trades_from_clob(
-    api_key: Optional[str] = None,
-    search_query: str = "weather",
-    num_trades: int = 50,
-) -> List[Dict[str, Any]]:
-    """Fetch real trades from Polymarket CLOB API.
-    
-    Args:
-        api_key: Optional API key for authenticated access
-        search_query: Search query for markets
-        num_trades: Number of trades to fetch
-        
-    Returns:
-        List of real trades
-    """
-    client = PolymarketCLOBClient(api_key=api_key)
-    
-    try:
-        print("\n" + "=" * 70)
-        print("FETCHING REAL TRADES FROM POLYMARKET CLOB API")
-        print("=" * 70)
-        
-        # Fetch weather markets
-        print(f"\n1. Searching for '{search_query}' markets...")
-        markets = await client.get_markets(search=search_query, limit=20)
-        
-        if not markets:
-            print("❌ No markets found")
+    async def get_markets(self, limit: int = 100) -> List[Dict[str, Any]]:
+        """Fetch all markets from CLOB."""
+        try:
+            # Note: py-clob-client is mostly synchronous in its current version
+            # or uses it internal session. We wrap it for consistency.
+            data = self.client.get_markets()
+            return data[:limit] if isinstance(data, list) else []
+        except Exception as e:
+            logger.error(f"Error fetching CLOB markets: {e}")
             return []
-        
-        print(f"✓ Found {len(markets)} markets")
-        
-        # Fetch trades for each market
-        all_trades = []
-        for market in markets[:5]:  # Limit to first 5 markets
-            market_id = market.get("id")
-            question = market.get("question", "")
-            
-            print(f"\n2. Fetching trades for: {question[:60]}...")
-            
-            trades = await client.get_market_trades(market_id, limit=10)
-            
-            if trades:
-                print(f"   ✓ Found {len(trades)} trades")
-                all_trades.extend(trades)
-            else:
-                print(f"   ⚠️  No trades found")
-        
-        print(f"\n✓ Total real trades fetched: {len(all_trades)}")
-        return all_trades
-    
-    finally:
-        await client.close()
 
+    async def get_order_book(self, token_id: str) -> Optional[CLOBOrderBook]:
+        """Fetch detailed order book from CLOB.
+        
+        Args:
+            token_id: The token/market asset ID
+        """
+        try:
+            data = self.client.get_order_book(token_id)
+            
+            bids = data.bids if hasattr(data, 'bids') else data.get("bids", [])
+            asks = data.asks if hasattr(data, 'asks') else data.get("asks", [])
+            
+            best_bid = float(bids[0].price) if bids else 0.0
+            best_ask = float(asks[0].price) if asks else 1.0
+            mid_price = (best_bid + best_ask) / 2
+            spread = best_ask - best_bid
+            
+            return CLOBOrderBook(
+                market_id=token_id,
+                bids=[{"price": float(b.price), "size": float(b.size)} for b in bids],
+                asks=[{"price": float(a.price), "size": float(a.size)} for a in asks],
+                best_bid=best_bid,
+                best_ask=best_ask,
+                mid_price=mid_price,
+                spread=spread
+            )
+        except Exception as e:
+            logger.error(f"Error fetching CLOB order book for {token_id}: {e}")
+            return None
 
-if __name__ == "__main__":
-    import os
-    
-    logging.basicConfig(level=logging.INFO)
-    
-    # Get API key from environment
-    api_key = os.getenv("POLYMARKET_CLOB_API_KEY")
-    
-    # Fetch real trades
-    trades = asyncio.run(fetch_real_trades_from_clob(
-        api_key=api_key,
-        search_query="weather",
-        num_trades=50,
-    ))
-    
-    if trades:
-        print("\n" + "=" * 70)
-        print("SAMPLE TRADES")
-        print("=" * 70)
-        for i, trade in enumerate(trades[:3]):
-            print(f"\nTrade {i+1}:")
-            print(json.dumps(trade, indent=2, default=str)[:500])
+    async def get_trades(self, token_id: str) -> List[Dict[str, Any]]:
+        """Fetch recent trades for a market."""
+        try:
+            return self.client.get_trades(token_id)
+        except Exception as e:
+            logger.error(f"Error fetching CLOB trades for {token_id}: {e}")
+            return []
+
+    async def get_historical_trades(self, token_id: str, limit: int = 100) -> List[Dict[str, Any]]:
+        """Fetch historical trades for a market using CLOB API."""
+        try:
+            # Note: Depending on py-clob-client version, this might vary.
+            # Usually get_trades with specific params or a sep endpoint.
+            # For now, we use get_trades as a base.
+            return self.client.get_trades(market=token_id)
+        except Exception as e:
+            logger.error(f"Error fetching historical trades for {token_id}: {e}")
+            return []
+
+    def derive_api_creds(self):
+        """Derive or create API credentials."""
+        return self.client.create_or_derive_api_creds()

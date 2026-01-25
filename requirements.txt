@@ -11,3 +11,5 @@ requests
 zod
 click
 rich
+py-clob-client
+pytest

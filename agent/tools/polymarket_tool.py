@@ -22,6 +22,8 @@ class PolymarketMarket:
     volume: float
     created_at: str
     end_date: str
+    condition_id: Optional[str] = None
+    clob_token_ids: Optional[List[str]] = None
 
 
 @dataclass
@@ -65,6 +67,8 @@ class PolymarketClient:
         limit: int = 100,
         offset: int = 0,
         sort_by: str = "volume",
+        active: bool = True,
+        closed: bool = False,
     ) -> List[PolymarketMarket]:
         """Fetch markets from Polymarket.
         
@@ -73,6 +77,8 @@ class PolymarketClient:
             limit: Number of markets to return
             offset: Pagination offset
             sort_by: Sort field (volume, liquidity, created_at)
+            active: Filter for active markets (default: True)
+            closed: Filter for closed markets (default: False)
             
         Returns:
             List of PolymarketMarket objects
@@ -82,6 +88,8 @@ class PolymarketClient:
                 "limit": limit,
                 "offset": offset,
                 "sortBy": sort_by,
+                "active": "true" if active else "false",
+                "closed": "true" if closed else "false",
             }
             if search:
                 params["search"] = search
@@ -94,8 +102,9 @@ class PolymarketClient:
             response.raise_for_status()
             data = response.json()
 
+            markets_data = data if isinstance(data, list) else data.get("data", [])
             markets = []
-            for market_data in data.get("data", []):
+            for market_data in markets_data:
                 try:
                     market = self._parse_market(market_data)
                     markets.append(market)
@@ -220,6 +229,13 @@ class PolymarketClient:
         yes_price = float(prices[0]) if prices else 0.5
         no_price = float(prices[1]) if len(prices) > 1 else (1 - yes_price)
 
+        clob_token_ids = data.get("clobTokenIds", [])
+        if isinstance(clob_token_ids, str) and clob_token_ids.strip():
+            try:
+                clob_token_ids = json.loads(clob_token_ids)
+            except:
+                clob_token_ids = []
+
         return PolymarketMarket(
             id=data.get("id", ""),
             question=data.get("question", ""),
@@ -231,6 +247,8 @@ class PolymarketClient:
             volume=float(data.get("volume24h", 0)),
             created_at=data.get("createdAt", ""),
             end_date=data.get("endDate", ""),
+            condition_id=data.get("conditionId"),
+            clob_token_ids=clob_token_ids
         )
 
 

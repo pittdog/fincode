@@ -23,6 +23,7 @@ class WeatherForecast:
     probability_high: float
     probability_low: float
     probability_avg: float
+    hourly_data: Optional[List[Dict[str, Any]]] = None
 
 
 class WeatherClient:
@@ -85,14 +86,7 @@ class WeatherClient:
             params = {
                 "location": f"{latitude},{longitude}",
                 "apikey": self.api_key,
-                "units": "fahrenheit",
-                "timesteps": "1d",
-                "fields": [
-                    "temperature",
-                    "temperatureMax",
-                    "temperatureMin",
-                    "weatherCode",
-                ],
+                "units": "imperial",
             }
 
             response = await self.client.get(
@@ -101,8 +95,36 @@ class WeatherClient:
             )
             response.raise_for_status()
             data = response.json()
+            
+            # Parse hourly forecast
+            timeline = data.get("timelines", {}).get("hourly", [])
+            if not timeline:
+                # Fallback to daily or realtime if hourly is missing for some reason
+                timeline = data.get("timelines", {}).get("daily", [])
+            
+            if not timeline:
+                 return None
 
-            return self._parse_forecast(data, city, latitude, longitude)
+            first_point = timeline[0]
+            values = first_point.get("values", {})
+            temp = float(values.get("temperature", 65))
+            
+            forecast = WeatherForecast(
+                city=city,
+                latitude=latitude,
+                longitude=longitude,
+                high_temp=float(values.get("temperatureMax", temp)),
+                low_temp=float(values.get("temperatureMin", temp)),
+                avg_temp=temp,
+                condition=self._map_weather_code(values.get("weatherCode", 0)),
+                timestamp=first_point.get("time", datetime.now().isoformat()),
+                probability_high=1.0,
+                probability_low=1.0,
+                probability_avg=1.0,
+                hourly_data=timeline,
+            )
+            
+            return forecast
         except Exception as e:
             logger.error(f"Error fetching forecast for {city}: {e}")
             return None

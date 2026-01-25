@@ -1,5 +1,5 @@
 """Utility modules for Polymarket trading agent."""
-from .polymarket_backtest_util import (
+from .backtests.polymarket_backtest_util import (
     BacktestDataGenerator,
     BacktestEngine,
     BacktestReporter,

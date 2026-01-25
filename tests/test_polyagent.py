@@ -1,10 +1,26 @@
 """Tests for Polymarket trading agent."""
 import pytest
 import asyncio
+import os
+import sys
+from pathlib import Path
 from unittest.mock import Mock, AsyncMock, patch, MagicMock
 from datetime import datetime
+from typing import Any, List, Dict, Optional
+import json
+from dotenv import load_dotenv
+
+# Load environment variables
+load_dotenv()
+
+# Add project root to sys.path
+root_path = Path(__file__).parent.parent
+if str(root_path) not in sys.path:
+    sys.path.append(str(root_path))
 
 from agent.tools.polymarket_tool import PolymarketClient, PolymarketMarket
+from agent.tools.polymarket_clob_api import PolymarketCLOBClient
+from agent.tools.polymarket_wrapper import PolymarketWrapper
 from agent.tools.weather_tool import WeatherClient, WeatherForecast
 from agent.tools.trading_strategy import (
     TradingStrategy,
@@ -12,6 +28,106 @@ from agent.tools.trading_strategy import (
     TradeOpportunity,
     PortfolioSimulator,
 )
+
+# Live Data Integration Tests
+def save_test_result(name: str, data: Any):
+    """Save test result to JSON with timestamp."""
+    results_dir = Path(__file__).parent.parent / "test-results"
+    results_dir.mkdir(exist_ok=True)
+    
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    filename = f"{name}_{timestamp}.json"
+    filepath = results_dir / filename
+    
+    with open(filepath, "w") as f:
+        if hasattr(data, "__dict__"):
+            json.dump(data.__dict__, f, indent=2, default=str)
+        else:
+            json.dump(data, f, indent=2, default=str)
+    print(f"\nSaved live data to: {filename}")
+
+class TestLivePolymarketIntegration:
+    """Live integration tests for Polymarket (requires API keys)."""
+
+    @pytest.mark.asyncio
+    @pytest.mark.skipif(not os.getenv("POLYMARKET_API_KEY"), reason="POLYMARKET_API_KEY not set")
+    async def test_live_fetch_markets(self):
+        """Fetch real ACTIVE markets from Polymarket and save them."""
+        client = PolymarketClient(api_key=os.getenv("POLYMARKET_API_KEY"))
+        # Specifically fetch active, non-closed markets
+        markets = await client.get_markets(limit=5, active=True, closed=False)
+        
+        assert len(markets) > 0
+        save_test_result("live_polymarket_markets", [m.__dict__ for m in markets])
+        await client.close()
+
+    @pytest.mark.asyncio
+    @pytest.mark.skipif(not os.getenv("TOMORROWIO_API_KEY"), reason="TOMORROWIO_API_KEY not set")
+    async def test_live_fetch_forecast(self):
+        """Fetch real HOURLY weather forecast and save it."""
+        client = WeatherClient(api_key=os.getenv("TOMORROWIO_API_KEY"))
+        forecast = await client.get_forecast("London")
+        
+        assert forecast is not None
+        assert forecast.hourly_data is not None
+        save_test_result("live_weather_forecast_hourly", forecast)
+        await client.close()
+
+    @pytest.mark.asyncio
+    @pytest.mark.skipif(not os.getenv("POLYMARKET_PRIVATE_KEY"), reason="POLYMARKET_PRIVATE_KEY not set")
+    async def test_live_clob_order_book(self):
+        """Fetch real order book from CLOB and save it."""
+        client = PolymarketClient(api_key=os.getenv("POLYMARKET_API_KEY"))
+        # Sort by volume to find active markets
+        markets = await client.get_markets(limit=10, active=True, closed=False, sort_by="volume")
+        
+        # Find first market with CLOB token IDs
+        clob_market = next((m for m in markets if m.clob_token_ids), None)
+        if not clob_market:
+             pytest.skip("No active markets with CLOB tokens found")
+        
+        clob_client = PolymarketCLOBClient()
+        # Use first CLOB token ID (usually YES/NO)
+        token_id = clob_market.clob_token_ids[0]
+        print(f"\nFetching order book for token: {token_id} ({clob_market.question})")
+        book = await clob_client.get_order_book(token_id)
+        
+        if not book:
+            pytest.skip(f"Could not fetch CLOB Order Book for {token_id}")
+            
+        save_test_result("live_clob_order_book", book)
+        await client.close()
+
+    @pytest.mark.asyncio
+    @pytest.mark.skipif(not os.getenv("POLYMARKET_API_KEY") or not os.getenv("POLYMARKET_SECRET"), reason="CLOB API Creds not set")
+    async def test_live_clob_historical_data(self):
+        """Fetch historical trade data from CLOB and save it."""
+        client = PolymarketClient(api_key=os.getenv("POLYMARKET_API_KEY"))
+        markets = await client.get_markets(limit=10, active=True, closed=False, sort_by="volume")
+        
+        # Find first market with CLOB token IDs
+        clob_market = next((m for m in markets if m.clob_token_ids), None)
+        if not clob_market:
+             pytest.skip("No active markets with CLOB tokens found")
+        
+        clob_client = PolymarketCLOBClient()
+        token_id = clob_market.clob_token_ids[0]
+        print(f"\nFetching historical trades for token: {token_id} ({clob_market.question})")
+        
+        # py-clob-client uses 'market' kwarg for token_id in get_trades
+        trades = await clob_client.get_historical_trades(token_id)
+        
+        if not trades:
+            # Try getting trades generic way if 'market' kwarg didn't work as expected
+            print(f"No trades found for {token_id}, trying generic fetch...")
+            trades = await clob_client.get_trades(token_id)
+
+        if not trades:
+            print(f"Still no trades found for {token_id}")
+        else:
+            save_test_result("live_clob_historical_trades", {"token_id": token_id, "question": clob_market.question, "trades": trades})
+        
+        await client.close()
 
 
 class TestPolymarketClient:
@@ -503,6 +619,93 @@ class TestIntegration:
         # Verify analysis
         assert len(opportunities) == 2
         assert any(opp.signal == TradeSignal.BUY for opp in opportunities)
+
+
+class TestPolymarketCLOBClient:
+    """Tests for Polymarket CLOB client."""
+
+    @pytest.mark.asyncio
+    async def test_clob_initialization(self):
+        """Test CLOB client initialization."""
+        with patch('agent.tools.polymarket_clob_api.ClobClient') as mock_clob:
+            client = PolymarketCLOBClient(key="0xabc", host="https://test.clob.com")
+            assert client.host == "https://test.clob.com"
+            assert client.key == "0xabc"
+
+    @pytest.mark.asyncio
+    async def test_get_order_book_mock(self):
+        """Test getting order book from CLOB mock."""
+        with patch('agent.tools.polymarket_clob_api.ClobClient') as mock_clob_class:
+            mock_clob = mock_clob_class.return_value
+            # Mock the response structure matching our implementation
+            mock_book_data = MagicMock()
+            mock_book_data.bids = [MagicMock(price="0.05", size="100")]
+            mock_book_data.asks = [MagicMock(price="0.07", size="100")]
+            mock_clob.get_order_book.return_value = mock_book_data
+            
+            client = PolymarketCLOBClient(key="0xabc")
+            book = await client.get_order_book("token_123")
+            
+            assert book is not None
+            assert book.best_bid == 0.05
+            assert book.best_ask == 0.07
+            assert book.mid_price == pytest.approx(0.06)
+
+
+class TestPolymarketWrapper:
+    """Tests for Polymarket wrapper."""
+
+    @pytest.mark.asyncio
+    async def test_scan_weather_opportunities_mock(self):
+        """Test scanning weather opportunities with mocked clients."""
+        mock_pm = AsyncMock(spec=PolymarketClient)
+        mock_clob = AsyncMock(spec=PolymarketCLOBClient)
+        mock_weather = AsyncMock(spec=WeatherClient)
+        
+        # Mock Polymarket discovery
+        mock_pm.search_weather_markets.return_value = [
+            PolymarketMarket(
+                id="m1", question="London High > 70", description="Desc",
+                outcomes=["Yes", "No"], yes_price=0.05, no_price=0.95,
+                liquidity=100.0, volume=500.0, created_at="now", end_date="2026-01-26"
+            )
+        ]
+        
+        # Mock weather forecast
+        mock_weather.get_forecast.return_value = WeatherForecast(
+            city="London", latitude=51.5, longitude=-0.1,
+            high_temp=75.0, low_temp=60.0, avg_temp=67.0,
+            condition="Clear", timestamp="now",
+            probability_high=0.8, probability_low=0.2, probability_avg=0.5
+        )
+        
+        # Mock CLOB pricing
+        mock_clob.get_order_book.return_value = MagicMock(mid_price=0.06)
+        
+        wrapper = PolymarketWrapper(mock_pm, mock_clob, mock_weather)
+        opportunities = await wrapper.scan_weather_opportunities()
+        
+        assert len(opportunities) > 0
+        assert opportunities[0]["city"] == "London"
+        assert opportunities[0]["market_price"] == 0.06
+        assert opportunities[0]["fair_price"] == 0.8  # probability_high
+
+    @pytest.mark.asyncio
+    async def test_simulate_trade_mock(self):
+        """Test trade simulation logic."""
+        mock_clob = AsyncMock(spec=PolymarketCLOBClient)
+        mock_clob.get_order_book.return_value = MagicMock(
+            asks=[{"price": 0.05, "size": 1000}, {"price": 0.06, "size": 1000}],
+            best_ask=0.05
+        )
+        
+        wrapper = PolymarketWrapper(AsyncMock(), mock_clob, AsyncMock())
+        result = await wrapper.simulate_polymarket_trade(amount=50.0, market_id="m1")
+        
+        assert "vwap" in result
+        assert result["shares_bought"] == 1000.0
+        assert result["vwap"] == 0.05
+        assert result["slippage"] == 0.0
 
 
 if __name__ == "__main__":

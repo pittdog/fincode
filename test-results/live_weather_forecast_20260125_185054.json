@@ -1,0 +1,13 @@
+{
+  "city": "London",
+  "latitude": 51.5074,
+  "longitude": -0.1278,
+  "high_temp": 6.14,
+  "low_temp": 6.14,
+  "avg_temp": 6.14,
+  "condition": "Realtime Data",
+  "timestamp": "2026-01-25T18:50:54.463849",
+  "probability_high": 1.0,
+  "probability_low": 1.0,
+  "probability_avg": 1.0
+}

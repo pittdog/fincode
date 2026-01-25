@@ -1,6 +1,14 @@
 import asyncio
 import os
+import sys
+from pathlib import Path
 from dotenv import load_dotenv
+
+# Add project root to sys.path
+root_path = Path(__file__).parent.parent
+if str(root_path) not in sys.path:
+    sys.path.append(str(root_path))
+
 from agent.agent import Agent
 from agent.types import AgentConfig, AnswerChunkEvent, DoneEvent, LogEvent
 

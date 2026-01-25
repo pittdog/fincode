@@ -24,7 +24,16 @@ from agent.types import (
     ToolSummary,
 )
 from model.llm import LLMProvider
-from agent.tools import FinancialsTool, TickerTool, NewsTool, WebSearchTool
+from agent.tools import (
+    FinancialsTool, 
+    TickerTool, 
+    NewsTool, 
+    WebSearchTool,
+    PolymarketCLOBClient,
+    PolymarketWrapper
+)
+from agent.tools.polymarket_tool import PolymarketClient
+from agent.tools.weather_tool import WeatherClient
 from agent.prompts import (
     build_system_prompt,
     build_iteration_prompt,
@@ -214,7 +223,36 @@ class Agent:
                 func=news_tool.get_news,
                 args_schema=None,
             ),
+            # Polymarket Weather Analysis Tool
         ]
+
+        # Initialize Polymarket Clients
+        pm_api_key = os.getenv("POLYMARKET_API_KEY")
+        tomorrow_api_key = os.getenv("TOMORROWIO_API_KEY")
+        pm_private_key = os.getenv("POLYMARKET_PRIVATE_KEY")
+
+        if tomorrow_api_key:
+            pm_client = PolymarketClient(api_key=pm_api_key)
+            clob_client = PolymarketCLOBClient(key=pm_private_key)
+            weather_client = WeatherClient(api_key=tomorrow_api_key)
+            pm_wrapper = PolymarketWrapper(pm_client, clob_client, weather_client)
+
+            tools.append(
+                StructuredTool(
+                    name="scan_weather_opportunities",
+                    description="Scan Polymarket for weather-related trading opportunities. Returns a list of markets with calculated edge and confidence.",
+                    func=pm_wrapper.scan_weather_opportunities,
+                    args_schema=None,
+                )
+            )
+            tools.append(
+                StructuredTool(
+                    name="simulate_polymarket_trade",
+                    description="Simulate a trade on Polymarket by walking the CLOB order book for a specific amount. Parameters: amount (USDC), market_id (Token ID).",
+                    func=pm_wrapper.simulate_polymarket_trade,
+                    args_schema=None,
+                )
+            )
 
         if os.getenv("TAVILY_API_KEY"):
             tools.append(
