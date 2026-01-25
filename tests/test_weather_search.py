@@ -4,6 +4,7 @@ import pytest
 import asyncio
 import argparse
 from pathlib import Path
+from datetime import datetime
 from dotenv import load_dotenv
 from rich.console import Console
 from rich.table import Table
@@ -11,14 +12,17 @@ from rich.table import Table
 # Load environment variables
 load_dotenv()
 
-# Add project root to sys.path
+# Add project root and tests directory to sys.path
 root_path = Path(__file__).parent.parent
+tests_path = Path(__file__).parent
 if str(root_path) not in sys.path:
-    sys.path.append(str(root_path))
+    sys.path.insert(0, str(root_path))
+if str(tests_path) not in sys.path:
+    sys.path.insert(0, str(tests_path))
 
 from agent.tools.polymarket_tool import PolymarketClient
 from agent.tools.polymarket_search_tool import WeatherSearchTool
-from tests.test_utils import save_test_result
+from test_utils import save_test_result
 
 console = Console()
 
@@ -63,27 +67,76 @@ async def run_standalone_search(city: str, query: str = "temperature"):
     if not markets:
         console.print(f"[bold red]No weather markets found for {city} right now.[/bold red]")
     else:
-        # Create Table for console output
-        table = Table(title=f"Weather Markets: {city}", show_header=True, header_style="bold magenta")
-        table.add_column("Question", style="dim", width=60)
-        table.add_column("Liquidity", justify="right")
-        table.add_column("Yes Price", justify="right")
-        table.add_column("Best Bid", justify="right", style="green")
-        table.add_column("Best Ask", justify="right", style="red")
+        # Filter markets to only show those with complete data (no N/As)
+        complete_markets = [
+            m for m in markets 
+            if m.get("yes_book") and m.get("yes_book").get("best_bid") is not None
+            and m.get("forecast_at_resolution")
+        ]
+        
+        if not complete_markets:
+            console.print(f"[bold yellow]Found {len(markets)} markets but none have complete CLOB and forecast data.[/bold yellow]")
+        else:
+            # Create Table for console output
+            table = Table(title=f"Weather Markets: {city} ({len(complete_markets)} with complete data)", show_header=True, header_style="bold magenta", expand=True)
+            table.add_column("Question", style="dim", no_wrap=False, max_width=45)
+            table.add_column("Liq", justify="right", width=7)
+            table.add_column("YES % (VWAP)", justify="right", style="bright_green", width=12)
+            table.add_column("NO % (VWAP)", justify="right", style="bright_red", width=11)
+            table.add_column("Resolves (UTC)", justify="center", style="cyan", width=14)
+            table.add_column("Forecast @ (UTC)", justify="center", style="magenta", width=14)
+            table.add_column("Temp Forecast", justify="center", style="yellow", width=15)
 
-        for m in markets:
-            clob = m.get("clob_details") or {}
-            table.add_row(
-                m["question"],
-                f"${m['liquidity']:,.2f}",
-                f"${m['yes_price']:.3f}",
-                f"${clob.get('best_bid', 0):.3f}" if clob.get('best_bid') else "N/A",
-                f"${clob.get('best_ask', 0):.3f}" if clob.get('best_ask') else "N/A"
-            )
+            for m in complete_markets:
+                yes_book = m.get("yes_book") or {}
+                no_book = m.get("no_book") or {}
+                forecast = m.get("forecast_at_resolution")
+                
+                # Get volume-weighted prices (now stored in best_bid/best_ask)
+                yes_vwap = yes_book.get('best_bid', 0)  # VWAP stored here now
+                no_vwap = no_book.get('best_bid', 0)    # VWAP stored here now
+                
+                # Calculate fair value
+                yes_fair = yes_vwap if yes_vwap > 0 else 0.5
+                no_fair = no_vwap if no_vwap > 0 else 0.5
+                
+                # Format resolution time with AM/PM
+                resolution_time = "N/A"
+                if m.get("end_date"):
+                    try:
+                        dt = datetime.fromisoformat(m["end_date"].replace('Z', '+00:00'))
+                        resolution_time = dt.strftime("%b %d %I:%M%p")
+                    except:
+                        resolution_time = m["end_date"][:16]
+                
+                # Format forecast time with AM/PM
+                forecast_time = "N/A"
+                if forecast and forecast.get("time"):
+                    try:
+                        dt = datetime.fromisoformat(forecast["time"].replace('Z', '+00:00'))
+                        forecast_time = dt.strftime("%b %d %I:%M%p")
+                    except:
+                        forecast_time = forecast["time"][:16]
+                
+                # Format forecast temperature
+                temp_c = forecast['temperature_c']
+                temp_f = forecast['temperature_f']
+                forecast_str = f"{temp_c}°C/{temp_f}°F"
+                
+                table.add_row(
+                    m["question"],
+                    f"${m['liquidity']/1000:.1f}k",
+                    f"{yes_fair*100:.0f}%",
+                    f"{no_fair*100:.0f}%",
+                    resolution_time,
+                    forecast_time,
+                    forecast_str
+                )
+            
+            console.print(table)
+            console.print(f"\n[dim]Prices shown are volume-weighted fair values from order book depth.[/dim]")
         
-        console.print(table)
-        
-        # Save to JSON
+        # Save to JSON (save all markets, not just complete ones)
         save_test_result(f"weather_search_{city.lower().replace(' ', '_')}", markets)
     
     await client.close()

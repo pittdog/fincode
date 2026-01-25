@@ -77,12 +77,13 @@ class WeatherClient:
             WeatherForecast object or None if error
         """
         try:
-            # Get coordinates
+            # Get coordinates (normalize city name to title case for lookup)
             if latitude is None or longitude is None:
-                if city not in self.city_coordinates:
+                city_normalized = city.title()  # Convert to title case (e.g., "london" -> "London")
+                if city_normalized not in self.city_coordinates:
                     logger.error(f"City {city} not found in coordinates")
                     return None
-                coords = self.city_coordinates[city]
+                coords = self.city_coordinates[city_normalized]
                 latitude = coords["lat"]
                 longitude = coords["lon"]
 

@@ -89,57 +89,78 @@ class CommandProcessor:
              self._display_data(f"{ticker} Quote", result)
              return True, None
 
-        # Polymarket Commands
-        elif cmd.startswith("poly:"):
-            if cmd == "poly:backtest":
-                subcmd = args[0] if args else "weather"
-                period = args[1] if len(args) > 1 else "week"
+        # Polymarket Commands - Catch ANY input starting with poly: to prevent agent fallback
+        elif user_input.strip().lower().startswith("poly:"):
+            # Normalize command (handle both 'poly:weather' and 'poly: weather')
+            full_input = user_input.strip().lower()
+            if full_input.startswith("poly: "):
+                effective_cmd = "poly:" + full_input[6:].strip().split()[0] if len(full_input) > 6 else "poly:"
+                effective_args = full_input[6:].strip().split()[1:] if len(full_input) > 6 else []
+            else:
+                effective_cmd = cmd
+                effective_args = args
+
+            # Handle poly:backtest
+            if effective_cmd == "poly:backtest":
+                subcmd = effective_args[0] if effective_args else "weather"
+                period = effective_args[1] if len(effective_args) > 1 else "week"
                 
                 self.console.print(f"[bold cyan]Running Polymarket Backtest: {subcmd} ({period})[/bold cyan]")
                 
                 try:
-                    import asyncio
                     from utils.backtests.real_backtest_util import run_real_backtest
-                    
-                    # Ensure API keys are present
                     tomorrow_io_key = os.getenv("TOMORROWIO_API_KEY")
                     if not tomorrow_io_key:
                         self.console.print("[red]Error: TOMORROWIO_API_KEY not set.[/red]")
                         return True, None
                     
-                    # Run the backtest (direct await for the async call)
                     results = await run_real_backtest(
                         tomorrow_io_key=tomorrow_io_key,
                         output_dir="test-results"
                     )
-                        
                     self._display_data("Backtest Results", results)
                 except Exception as e:
                     self.console.print(f"[red]Error running backtest: {e}[/red]")
                 return True, None
 
-            elif cmd == "poly:weather":
-                if args:
-                    query = " ".join(args)
-                    self.console.print(f"[bold cyan]Searching Polymarket for: {query}[/bold cyan]")
-                    result = await self._exec_tool("search_weather_markets", query=query)
-                    self._display_data(f"Weather Search: {query}", result)
+            # Handle poly:weather (with fuzzy matching for typos like 'weathter')
+            elif any(x in effective_cmd or (effective_args and x in effective_args[0]) for x in ["weather", "weathter", "wether"]):
+                # If they typed 'poly: weather' then args[0] might be the city
+                # If they typed 'poly:weather London' then effective_cmd is 'poly:weather' and args[0] is 'London'
+                # If they typed 'poly: weather London' then effective_cmd is 'poly:weather' and args is ['London']
+                
+                # Re-parse city correctly
+                if effective_cmd == "poly:weather" or effective_cmd == "poly:weathter" or effective_cmd == "poly:wether":
+                    city = " ".join(effective_args)
+                else:
+                    # Case like 'poly: weather London' where effective_cmd was parsed as 'poly:weather' already
+                    city = " ".join(effective_args)
+
+                query = "temperature"
+                if city:
+                    self.console.print(f"[bold cyan]Searching Polymarket Weather for:[/bold cyan] [yellow]{city}[/yellow]")
+                    result = await self._exec_tool("search_weather_markets", query=query, city=city)
                 else:
                     self.console.print(f"[bold cyan]Scanning Polymarket Weather Opportunities...[/bold cyan]")
-                    result = await self._exec_tool("scan_weather_opportunities")
-                    self._display_data("Weather Opportunities", result)
+                    result = await self._exec_tool("search_weather_markets", query=query)
+                
+                self._display_weather_markets(result, city or "All Cities")
                 return True, None
 
-            elif cmd == "poly:buy":
-                if len(args) < 2:
+            elif effective_cmd == "poly:buy":
+                if len(effective_args) < 2:
                     self.console.print("[red]Error: Usage: poly:buy <amount> <market_id>[/red]")
                     return True, None
-                amount = args[0]
-                market_id = args[1]
+                amount = effective_args[0]
+                market_id = effective_args[1]
                 self.console.print(f"[bold cyan]Simulating Buy: {amount} on {market_id}[/bold cyan]")
-                # Place holder for wrapper.simulate_trade(...)
                 result = await self._exec_tool("simulate_polymarket_trade", amount=amount, market_id=market_id)
                 self._display_data("Trade Simulation", result)
+                return True, None
+            
+            else:
+                self.console.print(f"[red]Unknown Polymarket command: {effective_cmd}[/red]")
+                self.console.print("[dim]Available: poly:weather, poly:backtest, poly:buy[/dim]")
                 return True, None
 
         # If it doesn't match a direct shortcut, it might be a complex command for the agent
@@ -285,6 +306,90 @@ class CommandProcessor:
         )
         self.console.print(panel)
 
+    def _display_weather_markets(self, markets: Any, city: str):
+        """Display weather markets in a formatted table."""
+        from datetime import datetime
+        
+        if not markets or not isinstance(markets, list):
+            self.console.print(f"[bold red]No weather markets found for {city}.[/bold red]")
+            return
+        
+        # Filter markets to only show those with complete data (no N/As)
+        complete_markets = [
+            m for m in markets 
+            if m.get("yes_book") and m.get("yes_book").get("best_bid") is not None
+            and m.get("forecast_at_resolution")
+        ]
+        
+        if not complete_markets:
+            self.console.print(f"[bold yellow]Found {len(markets)} markets but none have complete CLOB and forecast data.[/bold yellow]")
+            self.console.print(f"[dim]Markets without forecasts cannot be analyzed for edge opportunities.[/dim]")
+            return
+        
+        # Create Table for console output
+        table = Table(
+            title=f"Weather Markets: {city} ({len(complete_markets)} with complete data)", 
+            show_header=True, 
+            header_style="bold magenta",
+            expand=True
+        )
+        table.add_column("Question", style="dim", no_wrap=False, max_width=45)
+        table.add_column("Liq", justify="right", width=7)
+        table.add_column("YES % (VWAP)", justify="right", style="bright_green", width=12)
+        table.add_column("NO % (VWAP)", justify="right", style="bright_red", width=11)
+        table.add_column("Resolves (UTC)", justify="center", style="cyan", width=14)
+        table.add_column("Forecast @ (UTC)", justify="center", style="magenta", width=14)
+        table.add_column("Temp Forecast", justify="center", style="yellow", width=15)
+
+        for m in complete_markets:
+            yes_book = m.get("yes_book") or {}
+            no_book = m.get("no_book") or {}
+            forecast = m.get("forecast_at_resolution")
+            
+            # Get volume-weighted prices (now stored in best_bid/best_ask)
+            yes_vwap = yes_book.get('best_bid', 0)  # VWAP stored here now
+            no_vwap = no_book.get('best_bid', 0)    # VWAP stored here now
+            
+            # Calculate fair value
+            yes_fair = yes_vwap if yes_vwap > 0 else 0.5
+            no_fair = no_vwap if no_vwap > 0 else 0.5
+            
+            # Format resolution time with AM/PM
+            resolution_time = "N/A"
+            if m.get("end_date"):
+                try:
+                    dt = datetime.fromisoformat(m["end_date"].replace('Z', '+00:00'))
+                    resolution_time = dt.strftime("%b %d %I:%M%p")
+                except:
+                    resolution_time = m["end_date"][:16]
+            
+            # Format forecast time with AM/PM
+            forecast_time = "N/A"
+            if forecast and forecast.get("time"):
+                try:
+                    dt = datetime.fromisoformat(forecast["time"].replace('Z', '+00:00'))
+                    forecast_time = dt.strftime("%b %d %I:%M%p")
+                except:
+                    forecast_time = forecast["time"][:16]
+            
+            # Format forecast temperature
+            temp_c = forecast['temperature_c']
+            temp_f = forecast['temperature_f']
+            forecast_str = f"{temp_c}°C/{temp_f}°F"
+            
+            table.add_row(
+                m["question"],
+                f"${m['liquidity']/1000:.1f}k",
+                f"{yes_fair*100:.0f}%",
+                f"{no_fair*100:.0f}%",
+                resolution_time,
+                forecast_time,
+                forecast_str
+            )
+        
+        self.console.print(table)
+        self.console.print(f"\n[dim]Prices shown are volume-weighted fair values from order book depth.[/dim]")
+
     def _show_help(self):
         table = Table(title="FinCode Global Commands (BASH-STYLE)", show_header=True, header_style="bold cyan")
         table.add_column("Command", style="bold yellow")
@@ -296,7 +401,7 @@ class CommandProcessor:
         table.add_row("financials [ticker]", "Direct financials lookup (Massive/Polygon)", "Instant")
         table.add_row("quote [ticker]", "Real-time quote data", "Instant")
         table.add_row("poly:backtest [type] [period]", "Run Polymarket backtest (Real data)", "Slow")
-        table.add_row("poly:weather", "Scan for weather opportunities", "Instant")
+        table.add_row("poly:weather [city]", "Scan for weather opportunities or search by city", "Instant")
         table.add_row("poly:buy <amt> <id>", "Simulate CLOB buy trade", "Instant")
         table.add_row("reset, r, ..", "Reset context/ticker", "-")
         table.add_row("help, h, ?", "Displays this menu", "-")
@@ -304,4 +409,7 @@ class CommandProcessor:
         table.add_row("exit, q", "Quit application", "-")
         
         self.console.print(table)
+        self.console.print("\n[bold cyan]Examples:[/bold cyan]")
+        self.console.print("  [yellow]poly:weather London[/yellow] - Search for London weather markets")
+        self.console.print("  [yellow]poly:weather \"temperature New York\"[/yellow] - Detailed keyword search")
         self.console.print("\n[italic]Note: Any other input is handled by the AI Research Agent (LangGraph).[/italic]")

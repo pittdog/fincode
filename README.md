@@ -140,10 +140,24 @@ The CLI supports fast, "bash-style" direct commands that bypass the AI agent for
 | `news [ticker]` | Direct news lookup via Tavily | **Instant** |
 | `financials [ticker]`| Direct income statement retrieval | **Instant** |
 | `quote [ticker]` | Quick market data snapshot | **Instant** |
+| `poly:weather [city]` | Search Polymarket weather markets by city/keyword | **Instant** |
+| `poly:backtest [type] [period]` | Run real-data backtest on weather markets | Slow |
+| `poly:buy <amt> <id>` | Simulate CLOB trade for a market | **Instant** |
 | `reset`, `r`, `..` | Reset context/ticker | - |
 | `help`, `h`, `?` | Displays help menu | - |
 | `cls` | Clear screen | - |
 | `exit`, `q` | Quit application | - |
+
+**Examples:**
+```bash
+# Weather market searches
+poly:weather London
+poly:weather "temperature New York"
+poly:weather     # Shows all weather opportunities
+
+# Simulated trading
+poly:buy 50 market_token_id_here
+```
 
 > [!TIP]
 > Use `load AAPL` to set the context, then simply type `news` or `financials` for instant results. Any other input will be handled by the full AI Research Agent (LangGraph) for deep analysis.
@@ -280,6 +294,23 @@ python3 tests/test_xai_integration.py
 ```
 
 Results are saved to `test-results/` directory in JSON format.
+
+### Standalone Weather Search
+
+You can also run the weather market search as a standalone script:
+
+```bash
+# Search for London weather markets (default)
+python tests/test_weather_search.py
+
+# Search for a specific city
+python tests/test_weather_search.py "New York"
+
+# Search with custom keywords
+python tests/test_weather_search.py Seoul --query "temperature"
+```
+
+Results are displayed in a formatted table and saved to `test-results/weather_search_[city]_[timestamp].json`.
 
 ### Recent Test Results
 
