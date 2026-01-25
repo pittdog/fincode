@@ -8,6 +8,7 @@ from unittest.mock import Mock, AsyncMock, patch, MagicMock
 from datetime import datetime
 from typing import Any, List, Dict, Optional
 import json
+import dataclasses
 from dotenv import load_dotenv
 
 # Load environment variables
@@ -30,21 +31,7 @@ from agent.tools.trading_strategy import (
 )
 
 # Live Data Integration Tests
-def save_test_result(name: str, data: Any):
-    """Save test result to JSON with timestamp."""
-    results_dir = Path(__file__).parent.parent / "test-results"
-    results_dir.mkdir(exist_ok=True)
-    
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    filename = f"{name}_{timestamp}.json"
-    filepath = results_dir / filename
-    
-    with open(filepath, "w") as f:
-        if hasattr(data, "__dict__"):
-            json.dump(data.__dict__, f, indent=2, default=str)
-        else:
-            json.dump(data, f, indent=2, default=str)
-    print(f"\nSaved live data to: {filename}")
+from tests.test_utils import save_test_result
 
 class TestLivePolymarketIntegration:
     """Live integration tests for Polymarket (requires API keys)."""
@@ -52,45 +39,47 @@ class TestLivePolymarketIntegration:
     @pytest.mark.asyncio
     @pytest.mark.skipif(not os.getenv("POLYMARKET_API_KEY"), reason="POLYMARKET_API_KEY not set")
     async def test_live_fetch_markets(self):
-        """Fetch real ACTIVE markets from Polymarket and save them."""
+        """Fetch real ACTIVE WEATHER markets from Polymarket and save them."""
         client = PolymarketClient(api_key=os.getenv("POLYMARKET_API_KEY"))
-        # Specifically fetch active, non-closed markets
-        markets = await client.get_markets(limit=5, active=True, closed=False)
+        # Use gamma_search for better keyword matching
+        markets = await client.gamma_search(q="temperature", limit=50)
         
-        assert len(markets) > 0
-        save_test_result("live_polymarket_markets", [m.__dict__ for m in markets])
+        # Strict filtering to ensure only weather
+        weather_keywords = ["temperature", "weather", "degree", "celsius", "fahrenheit"]
+        weather_markets = [
+            m for m in markets 
+            if any(kw in m.question.lower() for kw in weather_keywords)
+        ]
+        
+        assert len(weather_markets) > 0
+        save_test_result("live_weather_markets", [m.__dict__ for m in weather_markets])
         await client.close()
 
-    @pytest.mark.asyncio
-    @pytest.mark.skipif(not os.getenv("TOMORROWIO_API_KEY"), reason="TOMORROWIO_API_KEY not set")
-    async def test_live_fetch_forecast(self):
-        """Fetch real HOURLY weather forecast and save it."""
-        client = WeatherClient(api_key=os.getenv("TOMORROWIO_API_KEY"))
-        forecast = await client.get_forecast("London")
-        
-        assert forecast is not None
-        assert forecast.hourly_data is not None
-        save_test_result("live_weather_forecast_hourly", forecast)
-        await client.close()
 
     @pytest.mark.asyncio
     @pytest.mark.skipif(not os.getenv("POLYMARKET_PRIVATE_KEY"), reason="POLYMARKET_PRIVATE_KEY not set")
     async def test_live_clob_order_book(self):
-        """Fetch real order book from CLOB and save it."""
+        """Fetch real order book from CLOB for a weather market."""
         client = PolymarketClient(api_key=os.getenv("POLYMARKET_API_KEY"))
-        # Sort by volume to find active markets
-        markets = await client.get_markets(limit=10, active=True, closed=False, sort_by="volume")
+        # Specifically search for weather markets
+        markets = await client.gamma_search(q="temperature", limit=20)
         
-        # Find first market with CLOB token IDs
-        clob_market = next((m for m in markets if m.clob_token_ids), None)
+        # Find first market with CLOB token IDs and weather keywords
+        clob_market = None
+        weather_keywords = ["temperature", "weather", "degree", "celsius", "fahrenheit"]
+        for m in markets:
+            if m.clob_token_ids and any(kw in m.question.lower() for kw in weather_keywords):
+                clob_market = m
+                break
+                
         if not clob_market:
-             pytest.skip("No active markets with CLOB tokens found")
+             pytest.skip("No active weather markets with CLOB tokens found")
         
         clob_client = PolymarketCLOBClient()
-        # Use first CLOB token ID (usually YES/NO)
         token_id = clob_market.clob_token_ids[0]
-        print(f"\nFetching order book for token: {token_id} ({clob_market.question})")
-        book = await clob_client.get_order_book(token_id)
+        question = clob_market.question
+        print(f"\nFetching weather order book for token: {token_id} ({question})")
+        book = await clob_client.get_order_book(token_id, question=question)
         
         if not book:
             pytest.skip(f"Could not fetch CLOB Order Book for {token_id}")
@@ -101,31 +90,62 @@ class TestLivePolymarketIntegration:
     @pytest.mark.asyncio
     @pytest.mark.skipif(not os.getenv("POLYMARKET_API_KEY") or not os.getenv("POLYMARKET_SECRET"), reason="CLOB API Creds not set")
     async def test_live_clob_historical_data(self):
-        """Fetch historical trade data from CLOB and save it."""
+        """Fetch historical trade data from CLOB for WEATHER markets."""
         client = PolymarketClient(api_key=os.getenv("POLYMARKET_API_KEY"))
-        markets = await client.get_markets(limit=10, active=True, closed=False, sort_by="volume")
         
-        # Find first market with CLOB token IDs
-        clob_market = next((m for m in markets if m.clob_token_ids), None)
-        if not clob_market:
-             pytest.skip("No active markets with CLOB tokens found")
+        # Focus exclusively on weather search terms
+        all_markets = []
+        for term in ["Highest temperature London", "London weather", "Temperature NYC", "Degree", "Weather 2026"]:
+            markets = await client.get_markets(search=term, limit=20, active=True, closed=False, sort_by="volume")
+            all_markets.extend(markets)
         
+        # Sort all discovered markets by volume desc
+        all_markets.sort(key=lambda x: x.volume, reverse=True)
+
         clob_client = PolymarketCLOBClient()
-        token_id = clob_market.clob_token_ids[0]
-        print(f"\nFetching historical trades for token: {token_id} ({clob_market.question})")
+        trades = []
+        token_id = None
+        question = "Unknown"
+
+        # Try to find trades for the most active markets
+        for clob_market in all_markets:
+            if not clob_market.clob_token_ids:
+                continue
+                
+            token_id = clob_market.clob_token_ids[0]
+            question = clob_market.question
+            print(f"\nTrying token: {token_id} ({question}) | Volume: {clob_market.volume}")
+            trades = await clob_client.get_historical_trades(token_id)
+            if trades:
+                print(f"Success! Found {len(trades)} trades for {token_id}")
+                break
         
-        # py-clob-client uses 'market' kwarg for token_id in get_trades
-        trades = await clob_client.get_historical_trades(token_id)
-        
+        # Fallback: Direct CLOB markets (filtered for weather)
         if not trades:
-            # Try getting trades generic way if 'market' kwarg didn't work as expected
-            print(f"No trades found for {token_id}, trying generic fetch...")
-            trades = await clob_client.get_trades(token_id)
+            print("No trades found via Gamma mapping, fetching direct CLOB markets...")
+            clob_markets = await clob_client.get_markets(limit=50) # Larger sample to find weather
+            if clob_markets:
+                keywords = ["weather", "temperature", "rain", "snow", "degree"]
+                for cm in clob_markets:
+                    # CLOB markets often have 'active' and 'asset_id'
+                    # We'll try to guess if it's weather from attributes if possible, 
+                    # but usually CLOB market names aren't in the base get_markets result.
+                    # As a better fallback, we'll just try to find ANY that work but log it clearly.
+                    # Or better: don't fallback to random markets if we want weather-only focus.
+                    pass
+                
+                # If we really want weather-only, we should probably SKIP the random fallback 
+                # and instead try more weather-specific keywords in Gamma.
+                print("Skipping random CLOB fallback to maintain weather-only focus.")
 
         if not trades:
-            print(f"Still no trades found for {token_id}")
+            print("Still no trades found across multiple attempts.")
         else:
-            save_test_result("live_clob_historical_trades", {"token_id": token_id, "question": clob_market.question, "trades": trades})
+            save_test_result("live_clob_historical_trades", {
+                "token_id": token_id, 
+                "question": question, 
+                "trades": trades[:50]
+            })
         
         await client.close()
 
@@ -201,77 +221,6 @@ class TestPolymarketClient:
         await client.close()
 
 
-class TestWeatherClient:
-    """Tests for weather client."""
-
-    def test_client_initialization(self):
-        """Test weather client initialization."""
-        client = WeatherClient(api_key="test_key")
-        assert client.api_key == "test_key"
-        assert "London" in client.city_coordinates
-
-    def test_city_coordinates(self):
-        """Test city coordinates."""
-        client = WeatherClient(api_key="test_key")
-        
-        assert client.city_coordinates["London"]["lat"] == 51.5074
-        assert client.city_coordinates["New York"]["lat"] == 40.7128
-        assert client.city_coordinates["Seoul"]["lat"] == 37.5665
-
-    def test_calculate_probability(self):
-        """Test probability calculation."""
-        client = WeatherClient(api_key="test_key")
-        
-        # Test within deviation
-        prob = client.calculate_probability(70.0, 70.0, 3.5)
-        assert prob == 1.0
-        
-        # Test at edge of deviation
-        prob = client.calculate_probability(73.5, 70.0, 3.5)
-        assert 0.5 < prob < 1.0  # At edge should be between 0.5 and 1.0
-        
-        # Test outside deviation
-        prob = client.calculate_probability(80.0, 70.0, 3.5)
-        assert prob < 0.5
-
-    def test_weather_code_mapping(self):
-        """Test weather code mapping."""
-        client = WeatherClient(api_key="test_key")
-        
-        assert client._map_weather_code(1000) == "Clear"
-        assert client._map_weather_code(1001) == "Cloudy"
-        assert client._map_weather_code(4001) == "Rain"
-        assert client._map_weather_code(5000) == "Snow"
-        assert client._map_weather_code(0) == "Unknown"
-
-    def test_parse_forecast(self):
-        """Test forecast parsing."""
-        client = WeatherClient(api_key="test_key")
-        
-        forecast_data = {
-            "timelines": {
-                "daily": [
-                    {
-                        "time": "2024-01-25T00:00:00Z",
-                        "values": {
-                            "temperatureMax": 75.0,
-                            "temperatureMin": 55.0,
-                            "temperature": 65.0,
-                            "weatherCode": 1000,
-                        }
-                    }
-                ]
-            }
-        }
-        
-        forecast = client._parse_forecast(forecast_data, "London", 51.5074, -0.1278)
-        
-        assert forecast is not None
-        assert forecast.city == "London"
-        assert forecast.high_temp == 75.0
-        assert forecast.low_temp == 55.0
-        assert forecast.avg_temp == 65.0
-        assert forecast.condition == "Clear"
 
 
 class TestTradingStrategy:

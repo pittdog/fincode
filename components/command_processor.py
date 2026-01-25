@@ -119,10 +119,15 @@ class CommandProcessor:
                 return True, None
 
             elif cmd == "poly:weather":
-                self.console.print(f"[bold cyan]Scanning Polymarket Weather Opportunities...[/bold cyan]")
-                # Place holder for wrapper.scan_weather_opportunities()
-                result = await self._exec_tool("scan_weather_opportunities")
-                self._display_data("Weather Opportunities", result)
+                if args:
+                    query = " ".join(args)
+                    self.console.print(f"[bold cyan]Searching Polymarket for: {query}[/bold cyan]")
+                    result = await self._exec_tool("search_weather_markets", query=query)
+                    self._display_data(f"Weather Search: {query}", result)
+                else:
+                    self.console.print(f"[bold cyan]Scanning Polymarket Weather Opportunities...[/bold cyan]")
+                    result = await self._exec_tool("scan_weather_opportunities")
+                    self._display_data("Weather Opportunities", result)
                 return True, None
 
             elif cmd == "poly:buy":
