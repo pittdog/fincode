@@ -79,14 +79,12 @@ async def run_standalone_search(city: str, query: str = "temperature"):
         else:
             # Create Table for console output
             table = Table(title=f"Weather Markets: {city} ({len(complete_markets)} with complete data)", show_header=True, header_style="bold magenta", expand=True)
-            table.add_column("Question", style="dim", no_wrap=False, max_width=40)
-            table.add_column("Liquidity", justify="right", width=8)
-            table.add_column("YES Bid", justify="right", style="green", width=7)
-            table.add_column("YES Ask", justify="right", style="red", width=7)
-            table.add_column("NO Bid", justify="right", style="green", width=7)
-            table.add_column("NO Ask", justify="right", style="red", width=7)
-            table.add_column("Resolves (UTC)", justify="center", style="cyan", width=12)
-            table.add_column("Forecast @ (UTC)", justify="center", style="magenta", width=12)
+            table.add_column("Question", style="dim", no_wrap=False, max_width=45)
+            table.add_column("Liq", justify="right", width=7)
+            table.add_column("YES % (VWAP)", justify="right", style="bright_green", width=12)
+            table.add_column("NO % (VWAP)", justify="right", style="bright_red", width=11)
+            table.add_column("Resolves (UTC)", justify="center", style="cyan", width=14)
+            table.add_column("Forecast @ (UTC)", justify="center", style="magenta", width=14)
             table.add_column("Temp Forecast", justify="center", style="yellow", width=15)
 
             for m in complete_markets:
@@ -94,21 +92,29 @@ async def run_standalone_search(city: str, query: str = "temperature"):
                 no_book = m.get("no_book") or {}
                 forecast = m.get("forecast_at_resolution")
                 
-                # Format resolution time
+                # Get volume-weighted prices (now stored in best_bid/best_ask)
+                yes_vwap = yes_book.get('best_bid', 0)  # VWAP stored here now
+                no_vwap = no_book.get('best_bid', 0)    # VWAP stored here now
+                
+                # Calculate fair value
+                yes_fair = yes_vwap if yes_vwap > 0 else 0.5
+                no_fair = no_vwap if no_vwap > 0 else 0.5
+                
+                # Format resolution time with AM/PM
                 resolution_time = "N/A"
                 if m.get("end_date"):
                     try:
                         dt = datetime.fromisoformat(m["end_date"].replace('Z', '+00:00'))
-                        resolution_time = dt.strftime("%b %d %H:%M")
+                        resolution_time = dt.strftime("%b %d %I:%M%p")
                     except:
                         resolution_time = m["end_date"][:16]
                 
-                # Format forecast time
+                # Format forecast time with AM/PM
                 forecast_time = "N/A"
                 if forecast and forecast.get("time"):
                     try:
                         dt = datetime.fromisoformat(forecast["time"].replace('Z', '+00:00'))
-                        forecast_time = dt.strftime("%b %d %H:%M")
+                        forecast_time = dt.strftime("%b %d %I:%M%p")
                     except:
                         forecast_time = forecast["time"][:16]
                 
@@ -119,17 +125,16 @@ async def run_standalone_search(city: str, query: str = "temperature"):
                 
                 table.add_row(
                     m["question"],
-                    f"${m['liquidity']:,.0f}",
-                    f"${yes_book.get('best_bid', 0):.2f}" if yes_book.get('best_bid') is not None else "N/A",
-                    f"${yes_book.get('best_ask', 0):.2f}" if yes_book.get('best_ask') is not None else "N/A",
-                    f"${no_book.get('best_bid', 0):.2f}" if no_book.get('best_bid') is not None else "N/A",
-                    f"${no_book.get('best_ask', 0):.2f}" if no_book.get('best_ask') is not None else "N/A",
+                    f"${m['liquidity']/1000:.1f}k",
+                    f"{yes_fair*100:.0f}%",
+                    f"{no_fair*100:.0f}%",
                     resolution_time,
                     forecast_time,
                     forecast_str
                 )
             
             console.print(table)
+            console.print(f"\n[dim]Prices shown are volume-weighted fair values from order book depth.[/dim]")
         
         # Save to JSON (save all markets, not just complete ones)
         save_test_result(f"weather_search_{city.lower().replace(' ', '_')}", markets)

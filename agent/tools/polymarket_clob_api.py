@@ -90,21 +90,40 @@ class PolymarketCLOBClient:
             
             best_bid = float(bids[0].price) if bids else 0.0
             best_ask = float(asks[0].price) if asks else 1.0
-            mid_price = (best_bid + best_ask) / 2
+            
+            # Calculate volume-weighted average price (VWAP) for better market price
+            bids_list = [{"price": float(b.price), "size": float(b.size)} for b in bids]
+            asks_list = [{"price": float(a.price), "size": float(a.size)} for a in asks]
+            
+            # VWAP calculation
+            if bids_list:
+                bid_vwap = sum(b["price"] * b["size"] for b in bids_list) / sum(b["size"] for b in bids_list)
+            else:
+                bid_vwap = 0.0
+                
+            if asks_list:
+                ask_vwap = sum(a["price"] * a["size"] for a in asks_list) / sum(a["size"] for a in asks_list)
+            else:
+                ask_vwap = 1.0
+            
+            # More realistic mid-price using VWAP
+            mid_price = (bid_vwap + ask_vwap) / 2
             spread = best_ask - best_bid
             
             return CLOBOrderBook(
                 market_id=token_id,
-                bids=[{"price": float(b.price), "size": float(b.size)} for b in bids],
-                asks=[{"price": float(a.price), "size": float(a.size)} for a in asks],
-                best_bid=best_bid,
-                best_ask=best_ask,
+                bids=bids_list,
+                asks=asks_list,
+                best_bid=bid_vwap,  # Use VWAP instead of extreme best_bid
+                best_ask=ask_vwap,  # Use VWAP instead of extreme best_ask
                 mid_price=mid_price,
                 spread=spread,
                 market_question=question
             )
         except Exception as e:
-            logger.error(f"Error fetching CLOB order book for {token_id}: {e}")
+            # Silently skip 404 errors (no order book exists) - these are expected
+            if "404" not in str(e) and "No orderbook exists" not in str(e):
+                logger.error(f"Error fetching CLOB order book for {token_id}: {e}")
             return None
 
     async def get_trades(self, token_id: str) -> List[Dict[str, Any]]:
