@@ -3,7 +3,7 @@ import os
 import logging
 from typing import List, Dict, Any, Optional
 from py_clob_client.client import ClobClient
-from py_clob_client.clob_types import ApiCreds
+from py_clob_client.clob_types import ApiCreds, TradeParams
 from dataclasses import dataclass
 
 logger = logging.getLogger(__name__)
@@ -18,6 +18,7 @@ class CLOBOrderBook:
     best_ask: float
     mid_price: float
     spread: float
+    market_question: Optional[str] = None
 
 class PolymarketCLOBClient:
     """Level 2 client for interacting with Polymarket CLOB."""
@@ -74,11 +75,12 @@ class PolymarketCLOBClient:
             logger.error(f"Error fetching CLOB markets: {e}")
             return []
 
-    async def get_order_book(self, token_id: str) -> Optional[CLOBOrderBook]:
+    async def get_order_book(self, token_id: str, question: Optional[str] = None) -> Optional[CLOBOrderBook]:
         """Fetch detailed order book from CLOB.
         
         Args:
             token_id: The token/market asset ID
+            question: Optional market question/name
         """
         try:
             data = self.client.get_order_book(token_id)
@@ -98,7 +100,8 @@ class PolymarketCLOBClient:
                 best_bid=best_bid,
                 best_ask=best_ask,
                 mid_price=mid_price,
-                spread=spread
+                spread=spread,
+                market_question=question
             )
         except Exception as e:
             logger.error(f"Error fetching CLOB order book for {token_id}: {e}")
@@ -115,10 +118,9 @@ class PolymarketCLOBClient:
     async def get_historical_trades(self, token_id: str, limit: int = 100) -> List[Dict[str, Any]]:
         """Fetch historical trades for a market using CLOB API."""
         try:
-            # Note: Depending on py-clob-client version, this might vary.
-            # Usually get_trades with specific params or a sep endpoint.
-            # For now, we use get_trades as a base.
-            return self.client.get_trades(market=token_id)
+            # The token_id from Gamma clobTokenIds is usually the asset_id
+            params = TradeParams(asset_id=token_id)
+            return self.client.get_trades(params)
         except Exception as e:
             logger.error(f"Error fetching historical trades for {token_id}: {e}")
             return []

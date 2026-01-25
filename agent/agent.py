@@ -30,7 +30,8 @@ from agent.tools import (
     NewsTool, 
     WebSearchTool,
     PolymarketCLOBClient,
-    PolymarketWrapper
+    PolymarketWrapper,
+    WeatherSearchTool
 )
 from agent.tools.polymarket_tool import PolymarketClient
 from agent.tools.weather_tool import WeatherClient
@@ -250,6 +251,16 @@ class Agent:
                     name="simulate_polymarket_trade",
                     description="Simulate a trade on Polymarket by walking the CLOB order book for a specific amount. Parameters: amount (USDC), market_id (Token ID).",
                     func=pm_wrapper.simulate_polymarket_trade,
+                    args_schema=None,
+                )
+            )
+            
+            search_tool = WeatherSearchTool(pm_client)
+            tools.append(
+                StructuredTool(
+                    name="search_weather_markets",
+                    description="Search for weather-related markets on Polymarket by city or keyword. Parameters: query (optional), city (optional).",
+                    func=search_tool.search,
                     args_schema=None,
                 )
             )

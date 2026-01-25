@@ -70,19 +70,7 @@ class PolymarketClient:
         active: bool = True,
         closed: bool = False,
     ) -> List[PolymarketMarket]:
-        """Fetch markets from Polymarket.
-        
-        Args:
-            search: Search query for market filtering
-            limit: Number of markets to return
-            offset: Pagination offset
-            sort_by: Sort field (volume, liquidity, created_at)
-            active: Filter for active markets (default: True)
-            closed: Filter for closed markets (default: False)
-            
-        Returns:
-            List of PolymarketMarket objects
-        """
+        """Fetch markets from Polymarket."""
         try:
             params = {
                 "limit": limit,
@@ -115,6 +103,40 @@ class PolymarketClient:
             return markets
         except Exception as e:
             logger.error(f"Error fetching markets: {e}")
+            return []
+
+    async def gamma_search(self, q: str, status: str = "active", limit: int = 50) -> List[PolymarketMarket]:
+        """Search Polymarket using the public-search endpoint (favored for keyword search)."""
+        try:
+            params = {
+                "q": q,
+                "events_status": status,
+                "limit_per_type": limit
+            }
+            response = await self.client.get(
+                f"{self.BASE_URL}/public-search",
+                params=params,
+                headers=self.headers
+            )
+            response.raise_for_status()
+            data = response.json()
+            
+            # Gamma search returns results grouped by type: 'events' containing 'markets'
+            events = data.get("events", [])
+            all_markets = []
+            for event in events:
+                event_markets = event.get("markets", [])
+                for m in event_markets:
+                    all_markets.append(self._parse_market(m))
+            
+            # Also check for top-level 'markets' if any (sometimes included)
+            direct_markets = data.get("markets", [])
+            for m in direct_markets:
+                all_markets.append(self._parse_market(m))
+
+            return all_markets
+        except Exception as e:
+            logger.error(f"Error in gamma_search for '{q}': {e}")
             return []
 
     async def get_market_by_id(self, market_id: str) -> Optional[PolymarketMarket]:

@@ -15,14 +15,17 @@ class WeatherForecast:
     city: str
     latitude: float
     longitude: float
-    high_temp: float
-    low_temp: float
-    avg_temp: float
+    high_temp: float  # Fahrenheit
+    low_temp: float   # Fahrenheit
+    avg_temp: float   # Fahrenheit
     condition: str
     timestamp: str
     probability_high: float
     probability_low: float
     probability_avg: float
+    high_temp_c: Optional[float] = None
+    low_temp_c: Optional[float] = None
+    avg_temp_c: Optional[float] = None
     hourly_data: Optional[List[Dict[str, Any]]] = None
 
 
@@ -99,7 +102,7 @@ class WeatherClient:
             # Parse hourly forecast
             timeline = data.get("timelines", {}).get("hourly", [])
             if not timeline:
-                # Fallback to daily or realtime if hourly is missing for some reason
+                # Fallback to daily if hourly is missing
                 timeline = data.get("timelines", {}).get("daily", [])
             
             if not timeline:
@@ -107,15 +110,26 @@ class WeatherClient:
 
             first_point = timeline[0]
             values = first_point.get("values", {})
-            temp = float(values.get("temperature", 65))
+            
+            # Calculate range from timeline
+            temps_f = [float(p.get("values", {}).get("temperature", 65)) for p in timeline[:24]] # Next 24 hours
+            high_temp_f = max(temps_f) if temps_f else float(values.get("temperature", 65))
+            low_temp_f = min(temps_f) if temps_f else float(values.get("temperature", 65))
+            avg_temp_f = statistics.mean(temps_f) if temps_f else float(values.get("temperature", 65))
+            
+            # Celsius conversions
+            def to_celsius(f): return round((f - 32) * 5/9, 2)
             
             forecast = WeatherForecast(
                 city=city,
                 latitude=latitude,
                 longitude=longitude,
-                high_temp=float(values.get("temperatureMax", temp)),
-                low_temp=float(values.get("temperatureMin", temp)),
-                avg_temp=temp,
+                high_temp=high_temp_f,
+                low_temp=low_temp_f,
+                avg_temp=avg_temp_f,
+                high_temp_c=to_celsius(high_temp_f),
+                low_temp_c=to_celsius(low_temp_f),
+                avg_temp_c=to_celsius(avg_temp_f),
                 condition=self._map_weather_code(values.get("weatherCode", 0)),
                 timestamp=first_point.get("time", datetime.now().isoformat()),
                 probability_high=1.0,
