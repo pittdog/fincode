@@ -36,7 +36,8 @@ class BacktestEngine:
         self,
         city: str,
         target_date: str,
-        lookback_days: int = 7
+        lookback_days: int = 7,
+        is_prediction: bool = False
     ) -> Dict[str, Any]:
         """Run a cross-sectional backtest for a specific city and date range."""
         total_invested = 0
@@ -219,7 +220,8 @@ class BacktestEngine:
 
         # 6. Save and Return Summary
         os.makedirs("test-results", exist_ok=True)
-        csv_file = f"test-results/{city}_backtest_{target_date}_lb{lookback_days}.csv"
+        file_type = "prediction" if is_prediction else "backtest"
+        csv_file = f"test-results/{city}_{file_type}_{target_date}_lb{lookback_days}.csv"
         
         final_pnl = total_payout - total_invested
         total_roi = (final_pnl / total_invested * 100) if total_invested > 0 else 0
