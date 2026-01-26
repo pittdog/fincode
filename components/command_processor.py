@@ -194,12 +194,10 @@ class CommandProcessor:
                 
                 target_date_obj = today + timedelta(days=numdays)
                 target_date = target_date_obj.strftime("%Y-%m-%d")
-                lookback = numdays - 1
-                
                 self.console.print(f"[bold cyan]Running Prediction for {city} (Next {numdays} days)...[/bold cyan]")
                 
                 # Run prediction using same engine
-                await self._run_backtest_handler(city, target_date, lookback, is_prediction=True)
+                await self._run_backtest_handler(city, target_date, numdays, is_prediction=True)
                 return True, None
 
             elif effective_cmd == "poly:buy":
@@ -478,6 +476,7 @@ class CommandProcessor:
                 trade_table.add_column("Target Bucket", justify="center", ratio=1)
                 trade_table.add_column("Forecast", justify="center", style="magenta")
                 trade_table.add_column("Our Prob", justify="right")
+                trade_table.add_column("Market Prob", justify="right")
                 trade_table.add_column("Price", justify="right")
                 trade_table.add_column("Result", justify="center")
 
@@ -488,6 +487,7 @@ class CommandProcessor:
                         f"{t['bucket']} ({t['target_f']}°F)",
                         f"{t['forecast']}°F",
                         t["prob"],
+                        t.get("market_prob", "N/A"),
                         f"${t['price']:.3f}",
                         f"[{res_color}]{t['result']}[/{res_color}]"
                     )
@@ -526,7 +526,8 @@ class CommandProcessor:
             await vc_client.close()
             
         except Exception as e:
-            self.console.print(f"[red]Error running backtest: {str(e)}[/red]")
+            mode_label = "Analysis" if is_prediction else "Backtest"
+            self.console.print(f"[red]Error running {mode_label}: {str(e)}[/red]")
             import traceback
             traceback.print_exc()
 

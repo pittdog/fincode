@@ -65,11 +65,21 @@ class BacktestEngine:
         elif city.upper() in ["LA", "L.A."]:
             weather_city = "Los Angeles"
 
-        # 1. Determine Date Range
-        end_dt = datetime.strptime(target_date, "%Y-%m-%d")
-        effective_end_dt = end_dt - timedelta(days=1)
-        # Fix: range(lookback_days - 1, -1, -1) gives exactly 'lookback_days' count
-        date_range = [(effective_end_dt - timedelta(days=i)).strftime("%Y-%m-%d") for i in range(lookback_days - 1, -1, -1)]
+        if is_prediction:
+            # Prediction: Start from tomorrow
+            current_dt = datetime.now()
+            # Ensure lookback_days is at least 1 for prediction
+            count = max(1, lookback_days)
+            date_range = [(current_dt + timedelta(days=i+1)).strftime("%Y-%m-%d") for i in range(count)]
+        else:
+            # Backtest: End yesterday
+            end_dt = datetime.strptime(target_date, "%Y-%m-%d")
+            effective_end_dt = end_dt - timedelta(days=1)
+            # Ensure lookback_days is at least 1
+            count = max(1, lookback_days)
+            date_range = [(effective_end_dt - timedelta(days=i)).strftime("%Y-%m-%d") for i in range(count - 1, -1, -1)]
+        
+        print(f"DEBUG: Mode={'Prediction' if is_prediction else 'Backtest'}, Range={date_range}")
 
         for current_date in date_range:
             # 2. Discover Market Series
@@ -150,16 +160,14 @@ class BacktestEngine:
             actual_weather = None
             weather_error = None
 
-            # If historical, we need actual weather to grade result
-            if is_historical:
-                try:
-                    actual_weather = await self.vc_client.get_day_weather(weather_city, current_date)
-                except Exception as e:
-                    print(f"Weather API Error for {current_date}: {e}")
-                    weather_error = str(e)
+            # Always attempt to fetch weather (handles both historical and forecast)
+            try:
+                actual_weather = await self.vc_client.get_day_weather(weather_city, current_date)
+            except Exception as e:
+                print(f"Weather API Error for {current_date}: {e}")
+                weather_error = str(e)
 
             # If we missed weather data for a historical date, we can't probability-check reliably
-            # (unless we only want to see market existence, but 'backtest' implies grading)
             if is_historical and not actual_weather:
                 if weather_error and "401" in weather_error:
                     # Return partial results found so far + Error
@@ -190,6 +198,9 @@ class BacktestEngine:
                 # Skip invalid markets
                 if parsed_threshold["value"] == -999: continue
                 
+                if not actual_weather:
+                    continue
+
                 entry_data = {"price": 0.5, "timestamp": "N/A", "fair_price": 0.0, "edge": -1}
                 fair_probs = self._calculate_probabilities(actual_weather, market.question)
                 fair_price = fair_probs["probability"]
@@ -251,7 +262,10 @@ class BacktestEngine:
                 creation_date_str = datetime.fromisoformat(creation_ts).strftime("%Y-%m-%d %H:%M")
 
                 is_best = (item is best_bucket)
-                should_trade = is_best and entry_data.get("edge", 0) > 0 and entry_data.get("price", 0) > 0
+                if not is_best:
+                    continue
+
+                should_trade = entry_data.get("edge", 0) > 0 and entry_data.get("price", 0) > 0
                 
                 if should_trade:
                     if not is_future:
@@ -268,22 +282,23 @@ class BacktestEngine:
                         pnl = 0
                         payout = 0
                         res_str = "PENDING"
-                    
-                    trades_summary.append({
-                        "date": current_date,
-                        "market_name": market.question,
-                        "bucket": bucket_label,
-                        "target_f": round(threshold_info.get("value", 0), 1),
-                        "forecast": round(actual_weather.get("tempmax", 0), 1),
-                        "actual": round(actual_weather["tempmax"], 1) if not is_future else "PENDING",
-                        "prob": f"{int(item['fair_price'] * 100)}%",
-                        "price": round(entry_data["price"], 3),
-                        "result": res_str
-                    })
                 else:
                     pnl = 0
                     payout = 0
-
+                    res_str = "SKIPPED"
+                
+                trades_summary.append({
+                    "date": current_date,
+                    "market_name": market.question,
+                    "bucket": bucket_label,
+                    "target_f": round(threshold_info.get("value", 0), 1),
+                    "forecast": round(actual_weather.get("tempmax", 0), 1),
+                    "actual": round(actual_weather["tempmax"], 1) if not is_future else "PENDING",
+                    "prob": f"{int(item['fair_price'] * 100)}%",
+                    "market_prob": f"{int(entry_data['price'] * 100)}%",
+                    "price": round(entry_data["price"], 3),
+                    "result": res_str
+                })
                 row_roi = (pnl / self.ALLOCATION_PER_TRADE * 100) if should_trade and not is_future else 0
                 
                 all_results.append({
