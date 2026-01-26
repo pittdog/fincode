@@ -237,6 +237,76 @@ class PolymarketClient:
 
         return markets
 
+    async def get_price_history(self, market_id: str) -> List[Dict[str, Any]]:
+        """Fetch price history for a market with diagnostics."""
+        try:
+            # Endpoint Candidates
+            candidates = [
+                {"url": f"https://clob.polymarket.com/prices-history", "params": {"market": market_id, "interval": "max"}},
+                {"url": f"https://clob.polymarket.com/prices-history", "params": {"market": market_id}},
+                {"url": f"{self.BASE_URL}/prices-history", "params": {"market": market_id}},
+                {"url": f"{self.BASE_URL}/prices-history", "params": {"marketId": market_id}},
+                {"url": f"{self.BASE_URL}/markets/{market_id}/prices"},
+            ]
+            
+            for cand in candidates:
+                url = cand["url"]
+                params = cand.get("params")
+                try:
+                    res = await self.client.get(url, params=params, headers=self.headers)
+                    logger.info(f"Trying {url} with {params} -> Status {res.status_code}")
+                    if res.status_code == 200:
+                        data = res.json()
+                        # Handle different response formats
+                        if isinstance(data, list):
+                            return data
+                        if isinstance(data, dict):
+                            if "history" in data: return data["history"]
+                            if "prices" in data: return data["prices"]
+                            return [data]
+                except Exception as e:
+                    continue
+            
+            return []
+        except Exception as e:
+            logger.error(f"Error fetching price history for {market_id}: {e}")
+            return []
+
+    async def find_market_id(self, city: str, date: str, extra_query: Optional[str] = None) -> Optional[str]:
+        """Attempt to find a market ID for a city, date, and optional threshold.
+        
+        Args:
+            city: City name
+            date: Date string (YYYY-MM-DD)
+            extra_query: Additional search terms (e.g. "-2°C")
+            
+        Returns:
+            Market ID string or None
+        """
+        try:
+            # Search for closed and active markets
+            search_query = f"weather {city} {date}"
+            if extra_query:
+                search_query += f" {extra_query}"
+            
+            # Use Gamma search for more relevant results
+            markets = await self.gamma_search(search_query, status="all")
+            
+            if not markets:
+                # Fallback to standard markets endpoint
+                markets = await self.get_markets(search=search_query, active=False, closed=True)
+            
+            # Find the best match
+            for market in markets:
+                # Check if date is in question or endDate matches
+                if date in market.question or date in market.end_date:
+                    return market.id
+                    
+            return None
+        except Exception as e:
+            logger.error(f"Error finding market ID for {city} {date}: {e}")
+            return None
+
     def _parse_market(self, data: Dict[str, Any]) -> PolymarketMarket:
         """Parse raw market data into PolymarketMarket object.
         

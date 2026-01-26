@@ -163,6 +163,25 @@ class CommandProcessor:
                 self.console.print("[dim]Available: poly:weather, poly:backtest, poly:buy[/dim]")
                 return True, None
 
+        elif cmd == "poly:backtest":
+            if len(args) < 2:
+                self.console.print("[red]Usage: poly:backtest <city> <date> [market_id][/red]")
+                self.console.print("[dim]Example: poly:backtest London 2026-01-25[/dim]")
+                return True, None
+            
+            city = args[0].title()
+            date = args[1]
+            market_id = args[2] if len(args) > 2 else None
+            
+            if city not in ["London", "New York", "Seoul"]:
+                self.console.print(f"[yellow]Warning: {city} is not a primary city (London, New York, Seoul)[/yellow]")
+            
+            self.console.print(f"[bold cyan]Running 7-Day Backtest for {city} on {date}...[/bold cyan]")
+            
+            # Run backtest
+            asyncio.create_task(self._run_backtest_handler(city, date, market_id))
+            return True, None
+
         # If it doesn't match a direct shortcut, it might be a complex command for the agent
         # or just a natural language question.
         return False, user_input
@@ -390,6 +409,56 @@ class CommandProcessor:
         self.console.print(table)
         self.console.print(f"\n[dim]Prices shown are volume-weighted fair values from order book depth.[/dim]")
 
+    async def _run_backtest_handler(self, city: str, date: str, market_id: Optional[str]):
+        """Async handler for running backtest to avoid blocking the CLI loop."""
+        try:
+            from utils.backtest_engine import BacktestEngine
+            from agent.tools.polymarket_tool import PolymarketClient
+            from agent.tools.visual_crossing_client import VisualCrossingClient
+            
+            pm_client = PolymarketClient()
+            vc_client = VisualCrossingClient()
+            engine = BacktestEngine(pm_client, vc_client)
+            
+            result = await engine.run_backtest(city, date, market_id)
+            
+            if not result.get("success"):
+                self.console.print(f"\n[red]Backtest Failed: {result.get('error')}[/red]")
+                await pm_client.close()
+                await vc_client.close()
+                return
+
+            # Display Results
+            self.console.print(Panel(
+                f"[bold]Market:[/bold] {result['question']}\n"
+                f"[bold]City:[/bold] {result['city']} | [bold]Date:[/bold] {result['target_date']}\n"
+                f"[bold]Outcome:[/bold] {'YES Win' if result['resolution'] > 0.5 else 'NO Win'}",
+                title="Backtest Summary", border_style="green"
+            ))
+            
+            if result.get("pnl"):
+                pnl = result["pnl"]
+                stats = Table(show_header=True, header_style="bold magenta")
+                stats.add_column("Metric")
+                stats.add_column("Value", justify="right")
+                
+                stats.add_row("Total Invested", f"${pnl['total_invested']:.2f}")
+                stats.add_row("Total Payout", f"${pnl['total_payout']:.2f}")
+                color = "green" if pnl['profit'] >= 0 else "red"
+                stats.add_row("Profit/Loss", f"[{color}]${pnl['profit']:.2f}[/{color}]")
+                stats.add_row("ROI", f"[{color}]{pnl['roi']*100:.2f}%[/{color}]")
+                stats.add_row("Signals/Trades", str(len(result['trades'])))
+                
+                self.console.print(stats)
+            else:
+                self.console.print("[yellow]No trade signals generated during the 7-day period.[/yellow]")
+
+            await pm_client.close()
+            await vc_client.close()
+            
+        except Exception as e:
+            self.console.print(f"[red]Error running backtest: {str(e)}[/red]")
+
     def _show_help(self):
         table = Table(title="FinCode Global Commands (BASH-STYLE)", show_header=True, header_style="bold cyan")
         table.add_column("Command", style="bold yellow")
@@ -400,7 +469,7 @@ class CommandProcessor:
         table.add_row("news [ticker]", "Direct news lookup (xAI/Grok)", "Instant")
         table.add_row("financials [ticker]", "Direct financials lookup (Massive/Polygon)", "Instant")
         table.add_row("quote [ticker]", "Real-time quote data", "Instant")
-        table.add_row("poly:backtest [type] [period]", "Run Polymarket backtest (Real data)", "Slow")
+        table.add_row("poly:backtest <city> <date> [id]", "7-day Strategy Backtest", "5-10s")
         table.add_row("poly:weather [city]", "Scan for weather opportunities or search by city", "Instant")
         table.add_row("poly:buy <amt> <id>", "Simulate CLOB buy trade", "Instant")
         table.add_row("reset, r, ..", "Reset context/ticker", "-")
