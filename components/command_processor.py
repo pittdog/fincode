@@ -168,6 +168,40 @@ class CommandProcessor:
                 self._display_weather_markets(result, city or "All Cities")
                 return True, None
 
+            elif effective_cmd == "poly:predict":
+                if not effective_args:
+                    self.console.print("[red]Error: Usage: poly:predict <city> <numdays>[/red]")
+                    self.console.print("[dim]Example: poly:predict London 2[/dim]")
+                    return True, None
+                
+                city = effective_args[0].title()
+                try:
+                    numdays = int(effective_args[1]) if len(effective_args) > 1 else 2
+                except ValueError:
+                    numdays = 2
+                
+                # Determine date range for prediction (tomorrow onwards)
+                from datetime import datetime, timedelta
+                today = datetime.now()
+                # For prediction, we want future dates. 
+                # run_backtest takes a target_date and lookback_days.
+                # If we pass target_date = "tomorrow + numdays" and lookback_days = numdays,
+                # it will iterate from target_date down to target_date - lookback.
+                # Example: Predict 2 days. 
+                # If today is 26th. 
+                # We want 27th, 28th.
+                # Set target = 28th. lookback = 1 (so 28, 27).
+                
+                target_date_obj = today + timedelta(days=numdays)
+                target_date = target_date_obj.strftime("%Y-%m-%d")
+                lookback = numdays - 1
+                
+                self.console.print(f"[bold cyan]Running Prediction for {city} (Next {numdays} days)...[/bold cyan]")
+                
+                # Run prediction using same engine
+                await self._run_backtest_handler(city, target_date, lookback, is_prediction=True)
+                return True, None
+
             elif effective_cmd == "poly:buy":
                 if len(effective_args) < 2:
                     self.console.print("[red]Error: Usage: poly:buy <amount> <market_id>[/red]")
@@ -412,7 +446,7 @@ class CommandProcessor:
         self.console.print(table)
         self.console.print(f"\n[dim]Prices shown are volume-weighted fair values from order book depth.[/dim]")
 
-    async def _run_backtest_handler(self, city: str, date: str, lookback_days: int = 7):
+    async def _run_backtest_handler(self, city: str, date: str, lookback_days: int = 7, is_prediction: bool = False):
         """Async handler for running backtest to avoid blocking the CLI loop."""
         try:
             from utils.backtest_engine import BacktestEngine
@@ -422,6 +456,9 @@ class CommandProcessor:
             pm_client = PolymarketClient()
             vc_client = VisualCrossingClient()
             engine = BacktestEngine(pm_client, vc_client)
+            
+            if is_prediction:
+                print(f"[dim]Fetching forecast data for {city}...[/dim]")
             
             result = await engine.run_backtest(city, date, lookback_days)
             
@@ -433,7 +470,8 @@ class CommandProcessor:
 
             # Display Trade Details Table
             if result.get("trades"):
-                self.console.print(f"\n[bold green]Market backtest '{result['city']}'[/bold green]")
+                title = f"Market Prediction '{result['city']}'" if is_prediction else f"Market Backtest '{result['city']}'"
+                self.console.print(f"\n[bold green]{title}[/bold green]")
                 
                 trade_table = Table(show_header=True, header_style="bold cyan", expand=True)
                 trade_table.add_column("Date", style="dim", width=12)
@@ -503,6 +541,7 @@ class CommandProcessor:
         table.add_row("financials [ticker]", "Direct financials lookup (Massive/Polygon)", "Instant")
         table.add_row("quote [ticker]", "Real-time quote data", "Instant")
         table.add_row("poly:backtest <city> <numdays>", "Multi-day Highest-Prob Backtest", "5-10s")
+        table.add_row("poly:predict <city> <numdays>", "Multi-day Highest-Prob Prediction", "5-10s")
         table.add_row("poly:weather [city]", "Scan for weather opportunities or search by city", "Instant")
         table.add_row("poly:buy <amt> <id>", "Simulate CLOB buy trade", "Instant")
         table.add_row("reset, r, ..", "Reset context/ticker", "-")
