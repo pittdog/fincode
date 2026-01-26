@@ -102,25 +102,24 @@ class CommandProcessor:
 
             # Handle poly:backtest
             if effective_cmd == "poly:backtest":
-                subcmd = effective_args[0] if effective_args else "weather"
-                period = effective_args[1] if len(effective_args) > 1 else "week"
+                if not effective_args:
+                    self.console.print("[red]Error: Usage: poly:backtest <city> <numdays>[/red]")
+                    self.console.print("[dim]Example: poly:backtest Seoul 1[/dim]")
+                    return True, None
                 
-                self.console.print(f"[bold cyan]Running Polymarket Backtest: {subcmd} ({period})[/bold cyan]")
-                
+                city = effective_args[0].title()
                 try:
-                    from utils.backtests.real_backtest_util import run_real_backtest
-                    tomorrow_io_key = os.getenv("TOMORROWIO_API_KEY")
-                    if not tomorrow_io_key:
-                        self.console.print("[red]Error: TOMORROWIO_API_KEY not set.[/red]")
-                        return True, None
-                    
-                    results = await run_real_backtest(
-                        tomorrow_io_key=tomorrow_io_key,
-                        output_dir="test-results"
-                    )
-                    self._display_data("Backtest Results", results)
-                except Exception as e:
-                    self.console.print(f"[red]Error running backtest: {e}[/red]")
+                    numdays = int(effective_args[1]) if len(effective_args) > 1 else 7
+                except ValueError:
+                    numdays = 7
+                
+                from datetime import datetime
+                today = datetime.now().strftime("%Y-%m-%d")
+                
+                self.console.print(f"[bold cyan]Running Cross-Sectional Backtest for {city}...[/bold cyan]")
+                
+                # Run backtest
+                await self._run_backtest_handler(city, today, numdays)
                 return True, None
 
             # Handle poly:weather (with fuzzy matching for typos like 'weathter')
@@ -163,24 +162,6 @@ class CommandProcessor:
                 self.console.print("[dim]Available: poly:weather, poly:backtest, poly:buy[/dim]")
                 return True, None
 
-        elif cmd == "poly:backtest":
-            if len(args) < 2:
-                self.console.print("[red]Usage: poly:backtest <city> <date> [market_id][/red]")
-                self.console.print("[dim]Example: poly:backtest London 2026-01-25[/dim]")
-                return True, None
-            
-            city = args[0].title()
-            date = args[1]
-            market_id = args[2] if len(args) > 2 else None
-            
-            if city not in ["London", "New York", "Seoul"]:
-                self.console.print(f"[yellow]Warning: {city} is not a primary city (London, New York, Seoul)[/yellow]")
-            
-            self.console.print(f"[bold cyan]Running 7-Day Backtest for {city} on {date}...[/bold cyan]")
-            
-            # Run backtest
-            asyncio.create_task(self._run_backtest_handler(city, date, market_id))
-            return True, None
 
         # If it doesn't match a direct shortcut, it might be a complex command for the agent
         # or just a natural language question.
@@ -409,7 +390,7 @@ class CommandProcessor:
         self.console.print(table)
         self.console.print(f"\n[dim]Prices shown are volume-weighted fair values from order book depth.[/dim]")
 
-    async def _run_backtest_handler(self, city: str, date: str, market_id: Optional[str]):
+    async def _run_backtest_handler(self, city: str, date: str, lookback_days: int = 7):
         """Async handler for running backtest to avoid blocking the CLI loop."""
         try:
             from utils.backtest_engine import BacktestEngine
@@ -420,7 +401,7 @@ class CommandProcessor:
             vc_client = VisualCrossingClient()
             engine = BacktestEngine(pm_client, vc_client)
             
-            result = await engine.run_backtest(city, date, market_id)
+            result = await engine.run_backtest(city, date, lookback_days)
             
             if not result.get("success"):
                 self.console.print(f"\n[red]Backtest Failed: {result.get('error')}[/red]")
@@ -428,36 +409,58 @@ class CommandProcessor:
                 await vc_client.close()
                 return
 
-            # Display Results
-            self.console.print(Panel(
-                f"[bold]Market:[/bold] {result['question']}\n"
-                f"[bold]City:[/bold] {result['city']} | [bold]Date:[/bold] {result['target_date']}\n"
-                f"[bold]Outcome:[/bold] {'YES Win' if result['resolution'] > 0.5 else 'NO Win'}",
-                title="Backtest Summary", border_style="green"
-            ))
+            # Display Trade Details Table
+            if result.get("trades"):
+                self.console.print(f"\n[bold green]Market backtest '{result['city']}'[/bold green]")
+                
+                trade_table = Table(show_header=True, header_style="bold cyan", expand=True)
+                trade_table.add_column("Date", style="dim", width=12)
+                # trade_table.add_column("Market Question (Full)", no_wrap=False, ratio=3)
+                trade_table.add_column("Target Bucket", justify="center", ratio=1)
+                trade_table.add_column("Prob", justify="right")
+                trade_table.add_column("Price", justify="right")
+                trade_table.add_column("Result", justify="center")
+
+                for t in result["trades"]:
+                    res_color = "green" if t["result"] == "WIN" else "red" if t["result"] == "LOSS" else "yellow"
+                    trade_table.add_row(
+                        t["date"],
+                        # t["market_name"],
+                        f"{t['bucket']} ({t['target_f']}°F)",
+                        t["prob"],
+                        f"${t['price']:.3f}",
+                        f"[{res_color}]{t['result']}[/{res_color}]"
+                    )
+                self.console.print(trade_table)
+
+            # Display Summary Stats
+            self.console.print("\n[bold]Portfolio Performance Summary:[/bold]")
+            stats = Table(show_header=True, header_style="bold magenta")
+            stats.add_column("Metric")
+            stats.add_column("Value", justify="right")
             
-            if result.get("pnl"):
-                pnl = result["pnl"]
-                stats = Table(show_header=True, header_style="bold magenta")
-                stats.add_column("Metric")
-                stats.add_column("Value", justify="right")
-                
-                stats.add_row("Total Invested", f"${pnl['total_invested']:.2f}")
-                stats.add_row("Total Payout", f"${pnl['total_payout']:.2f}")
-                color = "green" if pnl['profit'] >= 0 else "red"
-                stats.add_row("Profit/Loss", f"[{color}]${pnl['profit']:.2f}[/{color}]")
-                stats.add_row("ROI", f"[{color}]{pnl['roi']*100:.2f}%[/{color}]")
-                stats.add_row("Signals/Trades", str(len(result['trades'])))
-                
-                self.console.print(stats)
-            else:
-                self.console.print("[yellow]No trade signals generated during the 7-day period.[/yellow]")
+            stats.add_row("Initial Bankroll", "$1000.00")
+            stats.add_row("Completed Investments", f"${result['resolved_invested']:.2f}")
+            stats.add_row("Total Payouts", f"${result['resolved_payout']:.2f}")
+            
+            pnl_color = "green" if result['resolved_roi'] >= 0 else "red"
+            stats.add_row("Net Profit (Resolved)", f"[{pnl_color}]${(result['resolved_payout'] - result['resolved_invested']):.2f}[/{pnl_color}]")
+            stats.add_row("Resolved ROI", f"[{pnl_color}]{result['resolved_roi']:.2f}%[/{pnl_color}]")
+            
+            if result.get("pending_invested", 0) > 0:
+                stats.add_section()
+                stats.add_row("Capital in Active Markets", f"[yellow]${result['pending_invested']:.2f}[/yellow]")
+            
+            self.console.print(stats)
+            self.console.print(f"\n[dim]Detailed report saved to: {result['csv_path']}[/dim]")
 
             await pm_client.close()
             await vc_client.close()
             
         except Exception as e:
             self.console.print(f"[red]Error running backtest: {str(e)}[/red]")
+            import traceback
+            traceback.print_exc()
 
     def _show_help(self):
         table = Table(title="FinCode Global Commands (BASH-STYLE)", show_header=True, header_style="bold cyan")
@@ -469,7 +472,7 @@ class CommandProcessor:
         table.add_row("news [ticker]", "Direct news lookup (xAI/Grok)", "Instant")
         table.add_row("financials [ticker]", "Direct financials lookup (Massive/Polygon)", "Instant")
         table.add_row("quote [ticker]", "Real-time quote data", "Instant")
-        table.add_row("poly:backtest <city> <date> [id]", "7-day Strategy Backtest", "5-10s")
+        table.add_row("poly:backtest <city> <numdays>", "Multi-day Highest-Prob Backtest", "5-10s")
         table.add_row("poly:weather [city]", "Scan for weather opportunities or search by city", "Instant")
         table.add_row("poly:buy <amt> <id>", "Simulate CLOB buy trade", "Instant")
         table.add_row("reset, r, ..", "Reset context/ticker", "-")
