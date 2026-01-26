@@ -45,41 +45,41 @@ class VisualCrossingClient:
             logger.error("Visual Crossing API key not provided")
             return []
 
-        try:
-            # Calculate range
-            end_dt = datetime.strptime(end_date, "%Y-%m-%d")
-            start_dt = end_dt - timedelta(days=days)
-            start_date = start_dt.strftime("%Y-%m-%d")
+        if not self.api_key:
+            logger.error("Visual Crossing API key not provided")
+            return []
 
-            # API URL format: /timeline/{city}/{startDate}/{endDate}?key={apiKey}&unitGroup=us
-            url = f"{self.BASE_URL}/{city}/{start_date}/{end_date}"
-            params = {
-                "key": self.api_key,
-                "unitGroup": "us",
-                "include": "days,hours",
-                "contentType": "json"
-            }
+        # Calculate range
+        end_dt = datetime.strptime(end_date, "%Y-%m-%d")
+        start_dt = end_dt - timedelta(days=days)
+        start_date = start_dt.strftime("%Y-%m-%d")
 
-            import asyncio
-            max_retries = 10
-            for attempt in range(max_retries):
-                response = await self.client.get(url, params=params)
-                
-                if response.status_code == 429:
-                    wait_time = (2 ** attempt) * 10 # 10s, 20s, 40s, 80s...
-                    logger.warning(f"Rate limited (429). Retrying in {wait_time}s...")
-                    await asyncio.sleep(wait_time)
-                    continue
-                    
-                response.raise_for_status()
-                data = response.json()
-                return data.get("days", [])
+        # API URL format: /timeline/{city}/{startDate}/{endDate}?key={apiKey}&unitGroup=us
+        url = f"{self.BASE_URL}/{city}/{start_date}/{end_date}"
+        params = {
+            "key": self.api_key,
+            "unitGroup": "us",
+            "include": "days,hours",
+            "contentType": "json"
+        }
+
+        import asyncio
+        max_retries = 10
+        for attempt in range(max_retries):
+            response = await self.client.get(url, params=params)
             
-            logger.error("Exhausted all retries for Visual Crossing API")
-            return []
-        except Exception as e:
-            logger.error(f"Error fetching historical weather from Visual Crossing for {city}: {e}")
-            return []
+            if response.status_code == 429:
+                wait_time = (2 ** attempt) * 10 # 10s, 20s, 40s, 80s...
+                logger.warning(f"Rate limited (429). Retrying in {wait_time}s...")
+                await asyncio.sleep(wait_time)
+                continue
+                
+            response.raise_for_status()
+            data = response.json()
+            return data.get("days", [])
+        
+        logger.error("Exhausted all retries for Visual Crossing API")
+        return []
 
     async def get_day_weather(self, city: str, date: str) -> Optional[Dict[str, Any]]:
         """Fetch weather for a specific single day.

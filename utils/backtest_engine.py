@@ -46,27 +46,90 @@ class BacktestEngine:
         pending_invested = 0
         all_results = []
         trades_summary = []
+        
+        markets_found_total = 0
+        markets_processed_total = 0
 
         # 1. Determine Date Range
         end_dt = datetime.strptime(target_date, "%Y-%m-%d")
-        date_range = [(end_dt - timedelta(days=i)).strftime("%Y-%m-%d") for i in range(lookback_days, -1, -1)]
+        # Or if the user meant "from now on", we interpret target_date usually as "today".
+        # Safe bet: shift start back by 1 day.
+        
+        # If target_date is today, we want backtest to end yesterday.
+        # If target_date is already historical, we might keep it.
+        # 0. Handle Aliases Globally
+        weather_city = city
+        if city.upper() in ["NYC", "NYC.", "NEW YORK CITY"]:
+            weather_city = "New York"
+        elif city.upper() in ["LA", "L.A."]:
+            weather_city = "Los Angeles"
+
+        # 1. Determine Date Range
+        end_dt = datetime.strptime(target_date, "%Y-%m-%d")
+        effective_end_dt = end_dt - timedelta(days=1)
+        # Fix: range(lookback_days - 1, -1, -1) gives exactly 'lookback_days' count
+        date_range = [(effective_end_dt - timedelta(days=i)).strftime("%Y-%m-%d") for i in range(lookback_days - 1, -1, -1)]
 
         for current_date in date_range:
             # 2. Discover Market Series
-            search_query = f"weather {city}"
-            markets = await self.pm_client.gamma_search(search_query, status="all")
-            
-            # Filter for specific date in question
+            # Strategy: specific search for "Highest temperature" to cut through noise
+            # keys: "Highest temperature in NYC", "Highest temperature in New York"
+            # Strategy: Mixed Broad + Specific to ensure maximum recall
+            # e.g. "Highest temperature in NYC", "NYC", "New York", "Highest temperature in New York"
             date_obj = datetime.strptime(current_date, "%Y-%m-%d")
             month_name = date_obj.strftime("%B")
             day_num = date_obj.day
-            date_pattern = f"{month_name} {day_num}"
             
-            relevant_markets = [
-                m for m in markets 
-                if date_pattern in m.question 
-                and "highest temperature" in m.question.lower()
-            ]
+            queries = {
+                f"Highest temperature in {city}", 
+                f"Highest temperature in {weather_city}",
+                f"{month_name} {day_num} {city} weather",
+                f"{month_name} {day_num} {weather_city} weather",
+                f"{city} weather",
+                f"{weather_city} weather",
+                city,
+                weather_city
+            }
+            markets = []
+            seen_ids = set()
+            print(f"DEBUG: Searching queries: {queries}")
+            for q in queries:
+                 res = await self.pm_client.gamma_search(q, status="all", limit=500)
+                 for m in res:
+                     mid = str(m.id)
+                     if mid not in seen_ids:
+                         markets.append(m)
+                         seen_ids.add(mid)
+            
+            def filter_markets(market_list):
+                 date_obj = datetime.strptime(current_date, "%Y-%m-%d")
+                 month_name = date_obj.strftime("%B")
+                 day_num = date_obj.day
+                 date_pattern = f"{month_name} {day_num}"
+                 target_year = current_date[:4]  # "2026"
+                 
+                 filtered = []
+                 for m in market_list:
+                     if date_pattern not in m.question:
+                         continue
+                     if "highest temperature" not in m.question.lower():
+                         continue
+                     # Year Check: m.end_date (ISO "2026-01-26T...") must match current year
+                     if m.end_date and not m.end_date.startswith(target_year):
+                         continue
+                     filtered.append(m)
+                     
+                 return filtered
+
+            relevant_markets = filter_markets(markets)
+            
+            # Fallback if nothing found and alias differs
+            if not relevant_markets and city.lower() != weather_city.lower():
+                alt_query = f"Highest temperature in {weather_city}"
+                # Avoid re-running if we already searched this
+                if alt_query not in queries:
+                     alt_markets = await self.pm_client.gamma_search(alt_query, status="all", limit=500)
+                     relevant_markets = filter_markets(alt_markets)
 
             if not relevant_markets:
                 continue
@@ -80,13 +143,33 @@ class BacktestEngine:
                 return val
             relevant_markets.sort(key=lambda x: get_threshold(x.question))
 
-            # 3. Fetch Actual Weather
-            try:
-                actual_weather = await self.vc_client.get_day_weather(city, current_date)
-            except Exception:
-                continue
+            # Determine if the current date is historical or future
+            is_historical = datetime.strptime(current_date, "%Y-%m-%d").date() < datetime.now().date()
             
-            if not actual_weather:
+            actual_weather = None
+            weather_error = None
+
+            # If historical, we need actual weather to grade result
+            if is_historical:
+                try:
+                    actual_weather = await self.vc_client.get_day_weather(weather_city, current_date)
+                except Exception as e:
+                    print(f"Weather API Error for {current_date}: {e}")
+                    weather_error = str(e)
+
+            # If we missed weather data for a historical date, we can't probability-check reliably
+            # (unless we only want to see market existence, but 'backtest' implies grading)
+            if is_historical and not actual_weather:
+                if weather_error and "401" in weather_error:
+                    # Return partial results found so far + Error
+                    return {
+                        "city": city,
+                        "success": False, 
+                        "error": "Visual Crossing API Quota Exceeded (401). Partial results shown.",
+                        "trades": all_trades,
+                        "markets_found": markets_found_total,
+                        "markets_processed": markets_processed_total
+                    }
                 continue
 
             # 4. Collect Market Data and Identify Best Entry (Start of Day)
@@ -98,8 +181,14 @@ class BacktestEngine:
             hours, remainder = divmod(time_left.seconds, 3600)
             minutes, _ = divmod(remainder, 60)
             time_left_str = f"{hours}h {minutes}m"
+            
+            markets_found_total += len(relevant_markets)
 
             for market in relevant_markets:
+                parsed_threshold = self._parse_threshold(market.question)
+                # Skip invalid markets
+                if parsed_threshold["value"] == -999: continue
+                
                 entry_data = {"price": 0.5, "timestamp": "N/A", "fair_price": 0.0, "edge": -1}
                 fair_probs = self._calculate_probabilities(actual_weather, market.question)
                 fair_price = fair_probs["probability"]
@@ -160,7 +249,7 @@ class BacktestEngine:
                 creation_ts = market.created_at.replace("Z", "+00:00")
                 creation_date_str = datetime.fromisoformat(creation_ts).strftime("%Y-%m-%d %H:%M")
 
-                is_best = (item == best_bucket)
+                is_best = (item is best_bucket)
                 should_trade = is_best and entry_data.get("edge", 0) > 0 and entry_data.get("price", 0) > 0
                 
                 if should_trade:
@@ -252,13 +341,33 @@ class BacktestEngine:
             "final_pnl": final_pnl,
             "final_roi": total_roi,
             "csv_path": csv_file,
-            "trades": trades_summary
+            "trades": trades_summary,
+            "markets_found": markets_found_total,
+            "markets_processed": markets_processed_total
         }
 
     def _parse_threshold(self, question: str) -> Dict[str, Any]:
         """Extract temperature threshold and unit from question."""
+        # Check for ranges first (e.g. "14-15°F", "between 10 and 20")
+        # Regex for "number - number" where the hyphen is NOT a negative sign for the second number
+        # We capture two numbers.
+        range_match = re.search(r"(\d+(?:\.\d+)?)\s*[-to]\s*(\d+(?:\.\d+)?)", question)
+        if range_match:
+             val1 = float(range_match.group(1))
+             val2 = float(range_match.group(2))
+             # Determine unit usually at the end
+             unit_match = re.search(r"[0-9]\s*°?([CF])", question, re.IGNORECASE)
+             unit = unit_match.group(1).upper() if unit_match else "F"
+             
+             avg_val = (val1 + val2) / 2
+             if unit == 'C':
+                return {"value": (avg_val * 9/5) + 32, "unit": "F"}
+             return {"value": avg_val, "unit": "F"}
+
+        # Standard single value regex
         match = re.search(r"(-?\d+(?:\.\d+)?)\s*°?([CF])", question, re.IGNORECASE)
         if not match:
+             # Fallback for just a number
              match = re.search(r"(-?\d+(?:\.\d+)?)", question)
              if not match: return {"value": 0.0, "unit": "F"}
              return {"value": float(match.group(1)), "unit": "F"}

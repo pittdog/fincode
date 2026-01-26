@@ -107,19 +107,41 @@ class CommandProcessor:
                     self.console.print("[dim]Example: poly:backtest Seoul 1[/dim]")
                     return True, None
                 
-                city = effective_args[0].title()
-                try:
-                    numdays = int(effective_args[1]) if len(effective_args) > 1 else 7
-                except ValueError:
-                    numdays = 7
+                # Parse arguments: Handle multi-word cities, numdays, and optional DATE
+                # Format: poly:backtest <city> [numdays] [date]
                 
                 from datetime import datetime
-                today = datetime.now().strftime("%Y-%m-%d")
+                numdays = 7  # Default
+                target_date = datetime.now().strftime("%Y-%m-%d")
                 
-                self.console.print(f"[bold cyan]Running Cross-Sectional Backtest for {city}...[/bold cyan]")
+                # Copy args to consume
+                args_to_parse = effective_args.copy()
+                
+                # 1. Check for Date at the end (YYYY-MM-DD)
+                if args_to_parse and len(args_to_parse[-1]) == 10 and args_to_parse[-1].count('-') == 2:
+                    target_date = args_to_parse.pop()
+                    
+                # 2. Check for NumDays at the end (after date removed)
+                if args_to_parse and args_to_parse[-1].isdigit():
+                    numdays = int(args_to_parse.pop())
+                
+                # 3. Remaining is City
+                if not args_to_parse:
+                     self.console.print("[red]Error: City name is required.[/red]")
+                     return True, None
+                     
+                raw_city = " ".join(args_to_parse).replace('"', '').replace("'", "")
+                
+                # Handle standard casing unless it's an acronym
+                if raw_city.upper() in ["NYC", "LA", "DC", "SF", "NYC."]:
+                    city = raw_city.upper()
+                else:
+                    city = raw_city.title()
+                
+                self.console.print(f"[bold cyan]Running Cross-Sectional Backtest for {city} on {target_date} for {numdays} days...[/bold cyan]")
                 
                 # Run backtest
-                await self._run_backtest_handler(city, today, numdays)
+                await self._run_backtest_handler(city, target_date, numdays)
                 return True, None
 
             # Handle poly:weather (with fuzzy matching for typos like 'weathter')
@@ -415,9 +437,9 @@ class CommandProcessor:
                 
                 trade_table = Table(show_header=True, header_style="bold cyan", expand=True)
                 trade_table.add_column("Date", style="dim", width=12)
-                # trade_table.add_column("Market Question (Full)", no_wrap=False, ratio=3)
                 trade_table.add_column("Target Bucket", justify="center", ratio=1)
-                trade_table.add_column("Prob", justify="right")
+                trade_table.add_column("Forecast", justify="center", style="magenta")
+                trade_table.add_column("Our Prob", justify="right")
                 trade_table.add_column("Price", justify="right")
                 trade_table.add_column("Result", justify="center")
 
@@ -425,13 +447,21 @@ class CommandProcessor:
                     res_color = "green" if t["result"] == "WIN" else "red" if t["result"] == "LOSS" else "yellow"
                     trade_table.add_row(
                         t["date"],
-                        # t["market_name"],
                         f"{t['bucket']} ({t['target_f']}°F)",
+                        f"{t['forecast']}°F",
                         t["prob"],
                         f"${t['price']:.3f}",
                         f"[{res_color}]{t['result']}[/{res_color}]"
                     )
                 self.console.print(trade_table)
+            else:
+                markets_found = result.get("markets_found", 0)
+                if markets_found > 0:
+                     self.console.print(f"\n[bold yellow]Found {markets_found} relevant markets, but no trades met the strategy criteria (positive edge).[/bold yellow]")
+                     self.console.print(f"[dim](This suggests the market prices were less attractive than the calculated fair values.)[/dim]")
+                else:
+                    self.console.print(f"\n[bold yellow]No active trades found for {result['city']} in the specified period.[/bold yellow]")
+                    self.console.print(f"[dim](This usually means no 'Highest Temperature' markets match the dates on Polymarket.)[/dim]")
 
             # Display Summary Stats
             self.console.print("\n[bold]Portfolio Performance Summary:[/bold]")
