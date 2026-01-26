@@ -460,7 +460,7 @@ class CommandProcessor:
             if is_prediction:
                 print(f"[dim]Fetching forecast data for {city}...[/dim]")
             
-            result = await engine.run_backtest(city, date, lookback_days)
+            result = await engine.run_backtest(city, date, lookback_days, is_prediction=is_prediction)
             
             if not result.get("success"):
                 self.console.print(f"\n[red]Backtest Failed: {result.get('error')}[/red]")
