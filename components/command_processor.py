@@ -472,23 +472,33 @@ class CommandProcessor:
                 self.console.print(f"\n[bold green]{title}[/bold green]")
                 
                 trade_table = Table(show_header=True, header_style="bold cyan", expand=True)
-                trade_table.add_column("Date", style="dim", width=12)
-                trade_table.add_column("Target Bucket", justify="center", ratio=1)
+                trade_table.add_column("Date", style="dim", width=10)
+                trade_table.add_column("Target Bucket", justify="center", ratio=3)
                 trade_table.add_column("Forecast", justify="center", style="magenta")
-                trade_table.add_column("Our Prob", justify="right")
-                trade_table.add_column("Market Prob", justify="right")
+                trade_table.add_column("Forecast T.", justify="center", style="dim")
+                trade_table.add_column("Our Prob", justify="right", width=7)
+                trade_table.add_column("Market Prob", justify="right", width=7)
                 trade_table.add_column("Price", justify="right")
+                trade_table.add_column("Ends In", justify="right", style="dim")
                 trade_table.add_column("Result", justify="center")
 
                 for t in result["trades"]:
                     res_color = "green" if t["result"] == "WIN" else "red" if t["result"] == "LOSS" else "yellow"
+                    # Compact Date: Jan 28
+                    try:
+                        date_display = datetime.strptime(t["date"], "%Y-%m-%d").strftime("%b %d")
+                    except:
+                        date_display = t["date"]
+
                     trade_table.add_row(
-                        t["date"],
+                        date_display,
                         f"{t['bucket']} ({t['target_f']}°F)",
                         f"{t['forecast']}°F",
+                        t.get("forecast_time", "N/A"),
                         t["prob"],
                         t.get("market_prob", "N/A"),
                         f"${t['price']:.3f}",
+                        t.get("countdown", "N/A"),
                         f"[{res_color}]{t['result']}[/{res_color}]"
                     )
                 self.console.print(trade_table)

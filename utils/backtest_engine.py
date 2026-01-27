@@ -218,6 +218,32 @@ class BacktestEngine:
                             min_diff = diff
                             closest = h
                     
+                    if is_prediction:
+                        # Calculate countdown
+                        if market.end_date:
+                            try:
+                                end_dt = datetime.fromisoformat(market.end_date.replace("Z", "+00:00"))
+                                now_dt = datetime.now(end_dt.tzinfo)
+                                diff = end_dt - now_dt
+                                if diff.total_seconds() > 0:
+                                    days = diff.days
+                                    hours, rem = divmod(diff.seconds, 3600)
+                                    mins, _ = divmod(rem, 60)
+                                    if days > 0:
+                                        countdown = f"{days}d {hours}h"
+                                    elif hours > 0:
+                                        countdown = f"{hours}h {mins}m"
+                                    else:
+                                        countdown = f"{mins}m"
+                                else:
+                                    countdown = "Ended"
+                            except:
+                                countdown = "N/A"
+                        else:
+                            countdown = "N/A"
+                    else:
+                        countdown = "N/A"
+
                     if closest:
                         price = float(closest.get("p", closest.get("price", 0.5)))
                         if price > 0:
@@ -225,7 +251,8 @@ class BacktestEngine:
                                 "price": price,
                                 "timestamp": datetime.fromtimestamp(int(closest.get("t", closest.get("timestamp", 0)))).strftime("%Y-%m-%d %H:%M"),
                                 "fair_price": fair_price,
-                                "edge": fair_price - price
+                                "edge": fair_price - price,
+                                "countdown": countdown
                             }
 
                 group_results.append({
@@ -293,10 +320,12 @@ class BacktestEngine:
                     "bucket": bucket_label,
                     "target_f": round(threshold_info.get("value", 0), 1),
                     "forecast": round(actual_weather.get("tempmax", 0), 1),
+                    "forecast_time": actual_weather.get("forecast_time", "N/A"),
                     "actual": round(actual_weather["tempmax"], 1) if not is_future else "PENDING",
                     "prob": f"{int(item['fair_price'] * 100)}%",
                     "market_prob": f"{int(entry_data['price'] * 100)}%",
                     "price": round(entry_data["price"], 3),
+                    "countdown": entry_data.get("countdown", "N/A"),
                     "result": res_str
                 })
                 row_roi = (pnl / self.ALLOCATION_PER_TRADE * 100) if should_trade and not is_future else 0
@@ -309,10 +338,12 @@ class BacktestEngine:
                     "Start of Day Date": prediction_time.strftime("%Y-%m-%d %H:%M"),
                     "Market Resolution Date": resolution_time.strftime("%Y-%m-%d %H:%M"),
                     "Forecast Max Temp (F)": round(actual_weather.get("tempmax", 0), 1), 
+                    "Forecast Update Time": actual_weather.get("forecast_time", "N/A"),
                     "Actual Max Temp (F)": round(actual_weather["tempmax"], 1) if not is_future else "PENDING",
                     "Target Fahrenheit": round(threshold_info.get("value"), 1),
                     "Predicted Probability": f"{int(item['fair_price'] * 100)}% ({round(item['fair_price'], 2)})",
                     "Best Entry Price": round(entry_data["price"], 3),
+                    "Ends In": entry_data.get("countdown", "N/A"),
                     "Entry Time": entry_data["timestamp"],
                     "Resolution": res_val,
                     "Time Till Resolution": time_left_str,

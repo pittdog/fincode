@@ -1,6 +1,7 @@
 """Visual Crossing API client for fetching historical weather data."""
 import os
 import httpx
+import json
 import logging
 from typing import Optional, Dict, List, Any
 from datetime import datetime, timedelta
@@ -65,6 +66,8 @@ class VisualCrossingClient:
 
         import asyncio
         max_retries = 10
+        if os.getenv("FINCODE_DEBUG", "false").lower() == "true":
+            print(f"DEBUG: Weather API Request: {url} (params={ {k:v for k,v in params.items() if k != 'key'} })")
         for attempt in range(max_retries):
             response = await self.client.get(url, params=params)
             
@@ -76,10 +79,18 @@ class VisualCrossingClient:
                 
             response.raise_for_status()
             data = response.json()
-            return data.get("days", [])
+            
+            # The API doesn't always provide a single "generation time", 
+            # so we use the retrieval time as the forecast reference.
+            retrieval_time = datetime.now().strftime("%m-%d %H:%M")
+            
+            return {
+                "days": data.get("days", []),
+                "forecast_time": retrieval_time
+            }
         
         logger.error("Exhausted all retries for Visual Crossing API")
-        return []
+        return {"days": [], "forecast_time": None}
 
     async def get_day_weather(self, city: str, date: str) -> Optional[Dict[str, Any]]:
         """Fetch weather for a specific single day.
@@ -91,5 +102,11 @@ class VisualCrossingClient:
         Returns:
             Weather data for that day
         """
-        days = await self.get_historical_weather_range(city, date, days=0)
-        return days[0] if days else None
+        res = await self.get_historical_weather_range(city, date, days=0)
+        days = res.get("days", [])
+        if not days:
+            return None
+            
+        day_data = days[0]
+        day_data["forecast_time"] = res.get("forecast_time")
+        return day_data
