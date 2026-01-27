@@ -104,7 +104,7 @@ class CommandProcessor:
             if effective_cmd == "poly:backtest":
                 if not effective_args:
                     self.console.print("[red]Error: Usage: poly:backtest <city> <numdays>[/red]")
-                    self.console.print("[dim]Example: poly:backtest Seoul 1[/dim]")
+                    self.console.print("Example: poly:backtest Seoul 1")
                     return True, None
                 
                 city = effective_args[0].title()
@@ -149,7 +149,7 @@ class CommandProcessor:
             elif effective_cmd == "poly:predict":
                 if not effective_args:
                     self.console.print("[red]Error: Usage: poly:predict <city> <numdays>[/red]")
-                    self.console.print("[dim]Example: poly:predict London 2[/dim]")
+                    self.console.print("Example: poly:predict London 2")
                     return True, None
                 
                 city = effective_args[0].title()
@@ -193,7 +193,7 @@ class CommandProcessor:
             
             else:
                 self.console.print(f"[red]Unknown Polymarket command: {effective_cmd}[/red]")
-                self.console.print("[dim]Available: poly:weather, poly:backtest, poly:buy[/dim]")
+                self.console.print("Available: poly:weather, poly:backtest, poly:buy")
                 return True, None
 
 
@@ -289,7 +289,7 @@ class CommandProcessor:
                 border_style="blue",
                 padding=(1, 2)
             ))
-            self.console.print(f"[dim italic]Source: Massive[/dim italic]")
+            self.console.print(f"Source: Massive")
             return
 
         # Special handling for News results to quote sources and provider
@@ -329,7 +329,7 @@ class CommandProcessor:
                     table.add_row(key.replace("_", " ").title(), f"{display_val} {unit}")
             
             self.console.print(table)
-            self.console.print(f"[dim italic]Source: Massive (Polygon)[/dim italic]")
+            self.console.print(f"Source: Massive (Polygon)")
             return
 
         pretty_json = json.dumps(data, indent=2)
@@ -357,7 +357,7 @@ class CommandProcessor:
         
         if not complete_markets:
             self.console.print(f"[bold yellow]Found {len(markets)} markets but none have complete CLOB and forecast data.[/bold yellow]")
-            self.console.print(f"[dim]Markets without forecasts cannot be analyzed for edge opportunities.[/dim]")
+            self.console.print(f"Markets without forecasts cannot be analyzed for edge opportunities.")
             return
         
         # Create Table for console output
@@ -422,7 +422,7 @@ class CommandProcessor:
             )
         
         self.console.print(table)
-        self.console.print(f"\n[dim]Prices shown are volume-weighted fair values from order book depth.[/dim]")
+        self.console.print(f"\nPrices shown are volume-weighted fair values from order book depth.")
 
     async def _run_backtest_handler(self, city: str, date: str, lookback_days: int = 7, is_prediction: bool = False):
         """Async handler for running backtest to avoid blocking the CLI loop."""
@@ -436,7 +436,7 @@ class CommandProcessor:
             engine = BacktestEngine(pm_client, vc_client)
             
             if is_prediction:
-                print(f"[dim]Fetching forecast data for {city}...[/dim]")
+                print(f"Fetching forecast data for {city}...")
             
             result = await engine.run_backtest(city, date, lookback_days, is_prediction=is_prediction)
             
@@ -490,7 +490,7 @@ class CommandProcessor:
                 stats.add_row("Capital in Active Markets", f"[yellow]${result['pending_invested']:.2f}[/yellow]")
             
             self.console.print(stats)
-            self.console.print(f"\n[dim]Detailed report saved to: {result['csv_path']}[/dim]")
+            self.console.print(f"\nDetailed report saved to: {result['csv_path']}")
 
             await pm_client.close()
             await vc_client.close()
