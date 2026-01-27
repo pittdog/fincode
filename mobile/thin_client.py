@@ -4,6 +4,7 @@ from textual.containers import Container, Horizontal, Vertical
 import httpx
 import asyncio
 import json
+import subprocess
 
 API_URL = "http://127.0.0.1:8000"  # Change to your server IP when running on mobile
 
@@ -53,6 +54,7 @@ class ThinTUI(App):
         yield Horizontal(
             Button("Get Weather", id="btn_weather", variant="primary"),
             Button("Predict Market", id="btn_predict", variant="warning"),
+            Button("🎤 Voice", id="btn_voice", variant="success"),
             id="button-container"
         )
         yield Static("Ready.", id="result")
@@ -69,6 +71,34 @@ class ThinTUI(App):
         elif event.button.id == "btn_predict":
             result_widget.update(f"Running prediction for {city} (may take a moment)...")
             asyncio.create_task(self.fetch_prediction(city))
+
+        elif event.button.id == "btn_voice":
+            self.voice_input()
+
+    def voice_input(self) -> None:
+        """Run speech-to-text via Termux API."""
+        result_widget = self.query_one("#result", Static)
+        try:
+            # Run speech-to-text (blocks until speech ends or timeout)
+            # This requires termux-api package installed on Android
+            result = subprocess.check_output(["termux-speech-to-text"]).decode("utf-8").strip()
+            
+            if result:
+                input_widget = self.query_one("#city_input", Input)
+                input_widget.value = result
+                input_widget.focus()
+                result_widget.update(f"Voice recognized: {result}")
+            else:
+                result_widget.update("No speech detected.")
+        except subprocess.CalledProcessError:
+             result_widget.update("Speech recognition failed. Check if termux-api is installed and permissions granted.")
+             result_widget.add_class("error")
+        except FileNotFoundError:
+             result_widget.update("termux-speech-to-text not found. Install package 'termux-api'.")
+             result_widget.add_class("error")
+        except Exception as e:
+             result_widget.update(f"Voice error: {str(e)}")
+             result_widget.add_class("error")
 
     async def fetch_weather(self, city: str):
         result_widget = self.query_one("#result", Static)

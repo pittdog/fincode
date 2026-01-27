@@ -48,6 +48,28 @@ This guide explains how to run FinCode as a distributed system with a generic Fa
     python thin_client.py
     ```
 
+## 3. (Optional) Voice Input Setup
+
+Enhance the client with speech-to-text using Android's native speech recognizer.
+
+1.  **Install Termux:API**:
+    *   Download and install the **Termux:API** app from F-Droid or Google Play.
+    *   In Termux, install the API package:
+        ```bash
+        pkg install termux-api
+        ```
+    *   **Grant Permissions**: Go to Android Settings -> Apps -> Termux:API -> Permissions and allow **Microphone** access. Also ensure the main Termux app has Microphone permission.
+
+2.  **Test It**:
+    ```bash
+    termux-speech-to-text
+    ```
+    Speak into the phone. The text should appear in the terminal.
+
+3.  **Use It**:
+    *   The `mobile/thin_client.py` includes a **🎤 Voice** button.
+    *   Press the button, speak your command (e.g., "London"), and the app will populate the input field with the recognized text.
+
 ## Usage
 
 *   **Get Weather**: Enter a city and click "Get Weather".
