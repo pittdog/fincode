@@ -24,6 +24,8 @@ class PolymarketMarket:
     end_date: str
     condition_id: Optional[str] = None
     clob_token_ids: Optional[List[str]] = None
+    closed: bool = False
+    resolution: Optional[str] = None
 
 
 @dataclass
@@ -308,18 +310,40 @@ class PolymarketClient:
             return None
 
     def _parse_market(self, data: Dict[str, Any]) -> PolymarketMarket:
-        """Parse raw market data into PolymarketMarket object.
+        """Parse raw market data into PolymarketMarket object."""
         
-        Args:
-            data: Raw market data from API
+        # Priority 1: lastTradePrice (most accurate for Gamma)
+        last_price = data.get("lastTradePrice")
+        
+        # Priority 2: Midpoint of bestBid/bestAsk
+        best_bid = data.get("bestBid")
+        best_ask = data.get("bestAsk")
+        mid_price = None
+        if best_bid is not None and best_ask is not None:
+            mid_price = (float(best_bid) + float(best_ask)) / 2
             
-        Returns:
-            PolymarketMarket object
-        """
-        # Extract YES price (typically index 0)
-        prices = data.get("prices", [0.5, 0.5])
-        yes_price = float(prices[0]) if prices else 0.5
-        no_price = float(prices[1]) if len(prices) > 1 else (1 - yes_price)
+        # Priority 3: prices field (fallback)
+        prices_raw = data.get("prices", [])
+        prices_list = []
+        if isinstance(prices_raw, list):
+            prices_list = prices_raw
+        elif isinstance(prices_raw, str) and prices_raw:
+            try:
+                prices_list = json.loads(prices_raw)
+            except:
+                prices_list = []
+        
+        # Select base YES price
+        if last_price is not None:
+            yes_price = float(last_price)
+        elif mid_price is not None:
+            yes_price = mid_price
+        elif prices_list:
+            yes_price = float(prices_list[0])
+        else:
+            yes_price = 0.5
+            
+        no_price = 1.0 - yes_price
 
         clob_token_ids = data.get("clobTokenIds", [])
         if isinstance(clob_token_ids, str) and clob_token_ids.strip():
@@ -340,7 +364,9 @@ class PolymarketClient:
             created_at=data.get("createdAt", ""),
             end_date=data.get("endDate", ""),
             condition_id=data.get("conditionId"),
-            clob_token_ids=clob_token_ids
+            clob_token_ids=clob_token_ids,
+            closed=data.get("closed", False),
+            resolution=data.get("outcome") # This might be the winning outcome label
         )
 
 

@@ -15,18 +15,22 @@ class CommandProcessor:
         self.console = Console()
         self.current_ticker: Optional[str] = None
         self.history: List[str] = []
+        from utils.portfolio_manager import PortfolioManager
+        from agent.tools.polymarket_tool import get_polymarket_client
+        self.portfolio = PortfolioManager()
+        self._pm_client_cache = None
 
     async def process_command(self, user_input: str) -> Tuple[bool, Optional[str]]:
         """
         Processes a command directly if possible.
         Returns (is_handled, agent_query).
         """
-        parts = user_input.strip().lower().split()
-        if not parts:
+        raw_parts = user_input.strip().split()
+        if not raw_parts:
             return True, None
 
-        cmd = parts[0]
-        args = parts[1:]
+        cmd = raw_parts[0].lower()
+        args = raw_parts[1:]
 
         # Global basic commands
         if cmd in ["help", "h", "?"]:
@@ -89,12 +93,11 @@ class CommandProcessor:
              self._display_data(f"{ticker} Quote", result)
              return True, None
 
-        # Polymarket Commands - Catch ANY input starting with poly: to prevent agent fallback
         elif user_input.strip().lower().startswith("poly:"):
-            # Normalize command (handle both 'poly:weather' and 'poly: weather')
-            full_input = user_input.strip().lower()
-            if full_input.startswith("poly: "):
-                effective_cmd = "poly:" + full_input[6:].strip().split()[0] if len(full_input) > 6 else "poly:"
+            full_input = user_input.strip()
+            if full_input.lower().startswith("poly: "):
+                # Extract original case for args
+                effective_cmd = "poly:" + full_input[6:].strip().split()[0].lower() if len(full_input) > 6 else "poly:"
                 effective_args = full_input[6:].strip().split()[1:] if len(full_input) > 6 else []
             else:
                 effective_cmd = cmd
@@ -209,6 +212,98 @@ class CommandProcessor:
                 self.console.print(f"[bold cyan]Simulating Buy: {amount} on {market_id}[/bold cyan]")
                 result = await self._exec_tool("simulate_polymarket_trade", amount=amount, market_id=market_id)
                 self._display_data("Trade Simulation", result)
+                return True, None
+
+            elif effective_cmd == "poly:paperbuy":
+                if len(effective_args) < 2:
+                    self.console.print("[red]Error: Usage: poly:paperbuy <amount> <market_id>[/red]")
+                    return True, None
+                
+                try:
+                    amount = float(effective_args[0])
+                    market_id = effective_args[1]
+                except ValueError:
+                    self.console.print("[red]Error: Amount must be a number.[/red]")
+                    return True, None
+                
+                self.console.print(f"Fetching current price for [yellow]{market_id}[/yellow]...")
+                if not self._pm_client_cache:
+                    from agent.tools.polymarket_tool import get_polymarket_client
+                    self._pm_client_cache = await get_polymarket_client()
+                
+                market = await self._pm_client_cache.get_market_by_id(market_id)
+                
+                if not market:
+                    self.console.print(f"[red]Error: Could not find market {market_id}[/red]")
+                    return True, None
+                
+                # Market is a PolymarketMarket object
+                price = market.yes_price
+                if price <= 0:
+                    self.console.print("[red]Error: Market has no valid price.[/red]")
+                    return True, None
+                
+                trade = self.portfolio.add_trade(market_id, market.question, amount, price)
+                self.console.print(Panel(
+                    f"Market: {market.question}\nEntry Price: [bold]${price:.3f}[/bold]\nAmount: [green]${amount:.2f}[/green]\nShares: [cyan]{trade['shares']:.2f}[/cyan]",
+                    title="[bold green]Paper Trade Executed[/bold green]",
+                    border_style="green"
+                ))
+                return True, None
+
+            elif effective_cmd == "poly:papersell":
+                if len(effective_args) < 1:
+                    self.console.print("[red]Error: Usage: poly:papersell <transaction_id>[/red]")
+                    return True, None
+                
+                trade_id = effective_args[0]
+                
+                # Check if trade exists and is open
+                trades = self.portfolio.get_trades()
+                target_trade = None
+                for t in trades:
+                    if t["id"] == trade_id or t["id"].endswith(trade_id):
+                        if t["status"] == "OPEN":
+                            target_trade = t
+                            break
+                        else:
+                            self.console.print(f"[yellow]Trade {trade_id} is already SOLD.[/yellow]")
+                            return True, None
+                
+                if not target_trade:
+                    self.console.print(f"[red]Error: Open trade with ID {trade_id} not found.[/red]")
+                    return True, None
+                
+                self.console.print(f"Closing trade {trade_id} at current market price...")
+                if not self._pm_client_cache:
+                    from agent.tools.polymarket_tool import get_polymarket_client
+                    self._pm_client_cache = await get_polymarket_client()
+                
+                market = await self._pm_client_cache.get_market_by_id(target_trade["market_id"])
+                if not market:
+                    self.console.print("[red]Error: Could not fetch current market price to close trade.[/red]")
+                    return True, None
+                
+                exit_price = market.yes_price
+                closed_trade = self.portfolio.close_trade_by_id(trade_id, exit_price)
+                
+                if closed_trade:
+                    pnl = closed_trade["payout"] - closed_trade["amount"]
+                    pnl_perc = (pnl / closed_trade["amount"] * 100) if closed_trade["amount"] > 0 else 0
+                    pnl_color = "green" if pnl >= 0 else "red"
+                    
+                    self.console.print(Panel(
+                        f"Market: {closed_trade['question']}\n"
+                        f"Exit Price: [bold]${exit_price:.3f}[/bold]\n"
+                        f"Payout: [green]${closed_trade['payout']:.2f}[/green]\n"
+                        f"PnL: [{pnl_color}]${pnl:+.2f} ({pnl_perc:+.2f}%)[/{pnl_color}]",
+                        title="[bold yellow]Paper Trade SOLD[/bold yellow]",
+                        border_style="yellow"
+                    ))
+                return True, None
+
+            elif effective_cmd == "poly:portfolio":
+                await self._display_portfolio()
                 return True, None
             
             else:
@@ -471,13 +566,14 @@ class CommandProcessor:
                 title = f"Market Prediction '{result['city']}'" if is_prediction else f"Market Backtest '{result['city']}'"
                 self.console.print(f"\n[bold green]{title}[/bold green]")
                 
-                trade_table = Table(show_header=True, header_style="bold cyan", expand=True)
-                trade_table.add_column("Date", style="dim", width=10)
-                trade_table.add_column("Target Bucket", justify="center", ratio=3)
-                trade_table.add_column("Forecast", justify="center", style="magenta")
-                trade_table.add_column("Forecast T.", justify="center", style="dim")
-                trade_table.add_column("Our Prob", justify="right", width=7)
-                trade_table.add_column("Market Prob", justify="right", width=7)
+                trade_table = Table(show_header=True, header_style="bold cyan")
+                trade_table.add_column("Date", style="dim", width=8)
+                trade_table.add_column("Target", justify="center", ratio=2)
+                trade_table.add_column("Fcst", justify="center", style="magenta")
+                if is_prediction:
+                    trade_table.add_column("Market ID", style="cyan", width=8)
+                trade_table.add_column("Our %", justify="right", width=6)
+                trade_table.add_column("Mkt %", justify="right", width=6)
                 trade_table.add_column("Price", justify="right")
                 trade_table.add_column("Ends In", justify="right", style="dim")
                 trade_table.add_column("Result", justify="center")
@@ -485,22 +581,30 @@ class CommandProcessor:
                 for t in result["trades"]:
                     res_color = "green" if t["result"] == "WIN" else "red" if t["result"] == "LOSS" else "yellow"
                     # Compact Date: Jan 28
+                    from datetime import datetime
                     try:
                         date_display = datetime.strptime(t["date"], "%Y-%m-%d").strftime("%b %d")
                     except:
                         date_display = t["date"]
 
-                    trade_table.add_row(
+                    row_data = [
                         date_display,
                         f"{t['bucket']} ({t['target_f']}°F)",
                         f"{t['forecast']}°F",
-                        t.get("forecast_time", "N/A"),
+                    ]
+                    
+                    if is_prediction:
+                        row_data.append(str(t.get("market_id", "N/A")))
+                        
+                    row_data.extend([
                         t["prob"],
                         t.get("market_prob", "N/A"),
                         f"${t['price']:.3f}",
                         t.get("countdown", "N/A"),
                         f"[{res_color}]{t['result']}[/{res_color}]"
-                    )
+                    ])
+                    
+                    trade_table.add_row(*row_data)
                 self.console.print(trade_table)
             else:
                 markets_found = result.get("markets_found", 0)
@@ -541,6 +645,80 @@ class CommandProcessor:
             import traceback
             traceback.print_exc()
 
+    async def _display_portfolio(self):
+        """Display the current paper trading portfolio performance."""
+        trades = self.portfolio.get_trades()
+        if not trades:
+            self.console.print("[yellow]Your portfolio is empty. Use poly:paperbuy to start trading![/yellow]")
+            return
+
+        table = Table(title="Paper Trading Portfolio", header_style="bold magenta")
+        table.add_column("ID", style="dim", width=10)
+        table.add_column("Market", ratio=4)
+        table.add_column("Entry", justify="right")
+        table.add_column("Curr", justify="right")
+        table.add_column("PnL", justify="right")
+        table.add_column("Status", justify="center")
+
+        total_invested = 0
+        total_value = 0
+
+        for t in trades:
+            market_id = t["market_id"]
+            entry_price = t["entry_price"]
+            shares = t["shares"]
+            invested = t["amount"]
+            
+            # For OPEN trades, get current price
+            current_price = entry_price
+            status_display = t["status"]
+            
+            if t["status"] == "OPEN":
+                if not self._pm_client_cache:
+                    from agent.tools.polymarket_tool import get_polymarket_client
+                    self._pm_client_cache = await get_polymarket_client()
+                
+                market = await self._pm_client_cache.get_market_by_id(market_id)
+                if market:
+                    current_price = market.yes_price
+                status_display = "[yellow]OPEN[/yellow]"
+            else:
+                current_price = t.get("exit_price") or (1.0 if t["payout"] > 0 else 0.0)
+                status_display = "[green]SOLD[/green]" if t["payout"] > 0 else "[red]SOLD[/red]"
+
+            value = shares * current_price
+            pnl = value - invested
+            pnl_perc = (pnl / invested * 100) if invested > 0 else 0
+            pnl_color = "green" if pnl >= 0 else "red"
+            
+            total_invested += invested
+            total_value += value
+
+            table.add_row(
+                t["id"][-6:], # Only show last 6 chars of ID
+                t["question"],
+                f"${entry_price:.3f}",
+                f"${current_price:.3f}",
+                f"[{pnl_color}]${pnl:+.2f} ({pnl_perc:+.1f}%)[/{pnl_color}]",
+                status_display
+            )
+
+        self.console.print(table)
+        
+        # Summary footer
+        total_pnl = total_value - total_invested
+        total_pnl_perc = (total_pnl / total_invested * 100) if total_invested > 0 else 0
+        pnl_color = "green" if total_pnl >= 0 else "red"
+        
+        summary = Table.grid(padding=(0, 2))
+        summary.add_column(justify="right", style="bold")
+        summary.add_column(justify="left")
+        summary.add_row("Total Invested:", f"${total_invested:.2f}")
+        summary.add_row("Portfolio Value:", f"${total_value:.2f}")
+        summary.add_row("Net Profit/Loss:", f"[{pnl_color}]${total_pnl:+.2f} ({total_pnl_perc:+.2f}%)[/{pnl_color}]")
+        
+        self.console.print(Panel(summary, title="[bold]Portfolio Summary[/bold]", border_style="cyan"))
+
     def _show_help(self):
         table = Table(title="FinCode Global Commands (BASH-STYLE)", show_header=True, header_style="bold cyan")
         table.add_column("Command", style="bold yellow")
@@ -554,7 +732,10 @@ class CommandProcessor:
         table.add_row("poly:backtest <city> <numdays>", "Multi-day Highest-Prob Backtest", "5-10s")
         table.add_row("poly:predict <city> <numdays>", "Multi-day Highest-Prob Prediction", "5-10s")
         table.add_row("poly:weather [city]", "Scan for weather opportunities or search by city", "Instant")
-        table.add_row("poly:buy <amt> <id>", "Simulate CLOB buy trade", "Instant")
+        table.add_row("poly:paperbuy <amt> <id>", "Simulate a trade in your paper portfolio", "Instant")
+        table.add_row("poly:papersell <id>", "Sell an open paper trade by ID", "Instant")
+        table.add_row("poly:portfolio", "View your paper trading performance", "Instant")
+        table.add_row("poly:buy <amt> <id>", "Detailed simulation (no storage)", "Instant")
         table.add_row("reset, r, ..", "Reset context/ticker", "-")
         table.add_row("help, h, ?", "Displays this menu", "-")
         table.add_row("cls", "Clear screen", "-")

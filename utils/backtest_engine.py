@@ -273,13 +273,23 @@ class BacktestEngine:
                 market = item["market"]
                 entry_data = item["entry_data"]
                 resolution = self._determine_resolution(actual_weather, market.question)
+                
+                # Use real resolution if market is closed on Polymarket
+                is_real_resolution = False
+                if market.closed:
+                    # For Yes/No markets, if Yes price is 1.0, resolution is 1.0
+                    if market.yes_price >= 0.99:
+                        resolution = 1.0
+                        is_real_resolution = True
+                    elif market.yes_price <= 0.01:
+                        resolution = 0.0
+                        is_real_resolution = True
+                
                 bucket_label = market.question.split(" be ")[-1].split(" on ")[0]
                 
                 status = "RESOLVED"
                 if is_future:
                     status = "UNRESOLVED/ACTIVE"
-                    payout = 0
-                    pnl = 0
                     res_val = "N/A"
                 else:
                     res_val = int(resolution)
@@ -289,48 +299,36 @@ class BacktestEngine:
                 creation_date_str = datetime.fromisoformat(creation_ts).strftime("%Y-%m-%d %H:%M")
 
                 is_best = (item is best_bucket)
-                if not is_best:
-                    continue
-
                 should_trade = entry_data.get("edge", 0) > 0 and entry_data.get("price", 0) > 0
+                
+                # Calculate trade metrics
+                payout = 0
+                pnl = 0
+                res_str = "SKIPPED"
                 
                 if should_trade:
                     if not is_future:
                         shares = self.ALLOCATION_PER_TRADE / entry_data["price"]
                         payout = shares * resolution
                         pnl = payout - self.ALLOCATION_PER_TRADE
-                        total_invested += self.ALLOCATION_PER_TRADE
-                        total_payout += payout
-                        resolved_invested += self.ALLOCATION_PER_TRADE
-                        resolved_payout += payout
-                        res_str = "WIN" if resolution > 0 else "LOSS"
+                        res_str = "WIN" if resolution > 0.9 else "LOSS"
+                        
+                        # CRITICAL: Only update GLOBAL totals for the BEST bucket
+                        if is_best:
+                            total_invested += self.ALLOCATION_PER_TRADE
+                            total_payout += payout
+                            resolved_invested += self.ALLOCATION_PER_TRADE
+                            resolved_payout += payout
                     else:
-                        pending_invested += self.ALLOCATION_PER_TRADE
-                        pnl = 0
-                        payout = 0
                         res_str = "PENDING"
-                else:
-                    pnl = 0
-                    payout = 0
-                    res_str = "SKIPPED"
+                        if is_best:
+                            pending_invested += self.ALLOCATION_PER_TRADE
+                            total_invested += self.ALLOCATION_PER_TRADE
                 
-                trades_summary.append({
-                    "date": current_date,
-                    "market_name": market.question,
-                    "bucket": bucket_label,
-                    "target_f": round(threshold_info.get("value", 0), 1),
-                    "forecast": round(actual_weather.get("tempmax", 0), 1),
-                    "forecast_time": actual_weather.get("forecast_time", "N/A"),
-                    "actual": round(actual_weather["tempmax"], 1) if not is_future else "PENDING",
-                    "prob": f"{int(item['fair_price'] * 100)}%",
-                    "market_prob": f"{int(entry_data['price'] * 100)}%",
-                    "price": round(entry_data["price"], 3),
-                    "countdown": entry_data.get("countdown", "N/A"),
-                    "result": res_str
-                })
                 row_roi = (pnl / self.ALLOCATION_PER_TRADE * 100) if should_trade and not is_future else 0
-                
+
                 all_results.append({
+                    "Market ID": market.id,
                     "Market Group": f"Highest temperature in {city} on {current_date}?",
                     "Outcome Bucket": bucket_label,
                     "Status": status,
@@ -346,12 +344,31 @@ class BacktestEngine:
                     "Ends In": entry_data.get("countdown", "N/A"),
                     "Entry Time": entry_data["timestamp"],
                     "Resolution": res_val,
+                    "Resolution Source": "OFFICIAL" if is_real_resolution else "SIMULATED",
                     "Time Till Resolution": time_left_str,
-                    "Invested ($)": self.ALLOCATION_PER_TRADE if should_trade else 0,
-                    "Payout ($)": round(payout, 2) if status == "RESOLVED" else "N/A",
-                    "PnL ($)": round(pnl, 2) if status == "RESOLVED" else "N/A",
-                    "ROI (%)": round(row_roi, 2) if status == "RESOLVED" else "N/A"
+                    "Invested ($)": self.ALLOCATION_PER_TRADE if should_trade and is_best else 0,
+                    "Payout ($)": round(payout, 2) if should_trade else "N/A",
+                    "PnL ($)": round(pnl, 2) if should_trade else "N/A",
+                    "ROI (%)": f"{row_roi:.1f}%" if should_trade and not is_future else "N/A",
+                    "Is Recommendation": "YES" if is_best else "NO"
                 })
+
+                if is_best:
+                    trades_summary.append({
+                        "date": current_date,
+                        "market_id": market.id,
+                        "market_name": market.question,
+                        "bucket": bucket_label,
+                        "target_f": round(threshold_info.get("value", 0), 1),
+                        "forecast": round(actual_weather.get("tempmax", 0), 1),
+                        "forecast_time": actual_weather.get("forecast_time", "N/A"),
+                        "actual": round(actual_weather["tempmax"], 1) if not is_future else "PENDING",
+                        "prob": f"{int(item['fair_price'] * 100)}%",
+                        "market_prob": f"{int(entry_data['price'] * 100)}%",
+                        "price": round(entry_data["price"], 3),
+                        "countdown": entry_data.get("countdown", "N/A"),
+                        "result": res_str
+                    })
 
         # 6. Save and Return Summary
         os.makedirs("test-results", exist_ok=True)
