@@ -164,8 +164,25 @@ class PolymarketClient:
                 if resp.status_code == 200:
                     raw_positions = resp.json()
                     for rp in raw_positions:
+                        # Try to resolve short ID from slug if available
+                        short_id = None
+                        slug = rp.get("slug")
+                        if slug:
+                            try:
+                                # Quick lookup via Gamma API
+                                res = await self.client.get(f"{self.BASE_URL}/markets?slug={slug}")
+                                if res.status_code == 200:
+                                    m_data = res.json()
+                                    if isinstance(m_data, list) and len(m_data) > 0:
+                                        short_id = m_data[0].get("id")
+                                    elif isinstance(m_data, dict):
+                                        short_id = m_data.get("id")
+                            except:
+                                pass
+
                         positions.append({
                             "asset": rp.get("asset"), # Token ID
+                            "market_id": short_id or rp.get("conditionId") or rp.get("marketId"), # Prefer integer ID
                             "market": rp.get("title"), # Question
                             "outcome": rp.get("outcome"),
                             "size": float(rp.get("size", 0)),

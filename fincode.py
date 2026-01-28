@@ -20,7 +20,18 @@ async def main():
 
     # Create and run app
     cli = FinCodeCLI(model=model, provider=provider)
-    await cli.run()
+    
+    import sys
+    if len(sys.argv) > 1:
+        # One-off command execution
+        await cli.initialize()
+        user_input = " ".join(sys.argv[1:])
+        is_handled, agent_query = await cli.cmd_processor.process_command(user_input)
+        if not is_handled and agent_query:
+            await cli.process_query(agent_query)
+    else:
+        # Interactive mode
+        await cli.run()
 
 
 if __name__ == "__main__":

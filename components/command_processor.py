@@ -148,7 +148,7 @@ class CommandProcessor:
                 return True, None
 
             # Handle poly:weather (with fuzzy matching for typos like 'weathter')
-            elif effective_cmd == "poly:realportfolio":
+            elif effective_cmd == "poly:portfolio":
                  if not self._pm_client_cache:
                      from agent.tools.polymarket_tool import get_polymarket_client
                      self._pm_client_cache = await get_polymarket_client()
@@ -166,7 +166,7 @@ class CommandProcessor:
 
             elif any(x in effective_cmd or (effective_args and x in effective_args[0]) for x in ["weather", "weathter", "wether"]):
                  # Check if it was actually poly:realportfolio (redundant safety but ok)
-                 if effective_cmd == "poly:realportfolio":
+                 if effective_cmd == "poly:portfolio":
                      pass # Handled above
                  else:
                     # If they typed 'poly: weather' then args[0] might be the city
@@ -206,21 +206,29 @@ class CommandProcessor:
                 # Determine date range for prediction (tomorrow onwards)
                 from datetime import datetime, timedelta
                 today = datetime.now()
-                # For prediction, we want future dates. 
-                # run_backtest takes a target_date and lookback_days.
-                # If we pass target_date = "tomorrow + numdays" and lookback_days = numdays,
-                # it will iterate from target_date down to target_date - lookback.
-                # Example: Predict 2 days. 
-                # If today is 26th. 
-                # We want 27th, 28th.
-                # Set target = 28th. lookback = 1 (so 28, 27).
-                
                 target_date_obj = today + timedelta(days=numdays)
                 target_date = target_date_obj.strftime("%Y-%m-%d")
                 self.console.print(f"[bold cyan]Running Prediction for {city} (Next {numdays} days)...[/bold cyan]")
                 
                 # Run prediction using same engine
                 await self._run_backtest_handler(city, target_date, numdays, is_prediction=True)
+                return True, None
+
+            elif effective_cmd == "poly:backtestv2" or effective_cmd == "poly:backtest2":
+                if not effective_args:
+                    self.console.print("[red]Error: Usage: poly:backtestv2 <city> <numdays>[/red]")
+                    return True, None
+                
+                city = effective_args[0].title()
+                try:
+                    numdays = int(effective_args[1]) if len(effective_args) > 1 else 7
+                except ValueError:
+                    numdays = 7
+                
+                from datetime import datetime
+                today = datetime.now().strftime("%Y-%m-%d")
+                self.console.print(f"[bold cyan]Running Cross-Sectional Backtest V2 for {city} ({numdays} days)...[/bold cyan]")
+                await self._run_backtest_handler(city, today, numdays, v2_mode=True)
                 return True, None
 
             elif effective_cmd == "poly:buy":
@@ -251,6 +259,36 @@ class CommandProcessor:
 
                 result = await self._exec_tool("place_real_order", amount=amount, token_id=token_id)
                 self._display_data("Real Trade Execution", result)
+                return True, None
+
+            elif effective_cmd == "poly:sell":
+                if len(effective_args) < 2:
+                    self.console.print("[red]Error: Usage: poly:sell <amount> <market_id>[/red]")
+                    return True, None
+                
+                amount = float(effective_args[0])
+                market_id = effective_args[1]
+                
+                self.console.print(f"[bold red]Executing REAL Sell: {amount} shares on {market_id}...[/bold red]")
+                
+                if not self._pm_client_cache:
+                    from agent.tools.polymarket_tool import get_polymarket_client
+                    self._pm_client_cache = await get_polymarket_client()
+                
+                # Check if this is a Gamma ID (short) or Token ID (long)
+                token_id = market_id
+                if len(market_id) < 20: 
+                    # Likely a Gamma ID, resolve it
+                    self.console.print(f"[dim]Resolving Gamma ID {market_id} to CLOB Token ID...[/dim]")
+                    market = await self._pm_client_cache.get_market_by_id(market_id)
+                    if not market or not market.clob_token_ids:
+                        self.console.print(f"[bold red]Error:[/bold red] Could not resolve market ID {market_id} to tokens.")
+                        return True, None
+                    token_id = market.clob_token_ids[0] # Use YES token
+                    self.console.print(f"[dim]Resolved to YES Token: {token_id[:10]}...[/dim]")
+
+                result = await self._exec_tool("place_real_order", amount=amount, token_id=token_id, side="SELL")
+                self._display_data("Real Trade Execution (SELL)", result)
                 return True, None
 
             elif effective_cmd == "poly:simbuy":
@@ -352,7 +390,7 @@ class CommandProcessor:
                     ))
                 return True, None
 
-            elif effective_cmd == "poly:portfolio":
+            elif effective_cmd == "poly:paperportfolio":
                 await self._display_portfolio()
                 return True, None
             
@@ -603,6 +641,7 @@ class CommandProcessor:
         table = Table(title="Real On-Chain Positions", header_style="bold green")
         table.add_column("Market", ratio=4)
         table.add_column("Outcome", justify="center")
+        table.add_column("ID", style="dim")
         table.add_column("Size", justify="right")
         table.add_column("Entry", justify="right")
         table.add_column("Curr", justify="right")
@@ -623,9 +662,13 @@ class CommandProcessor:
             total_value += val
             total_pnl += pnl
 
+            # Pick the best ID to show (Market ID preferred for selling)
+            display_id = p.get("market_id") or p.get("asset", "")[:8]
+
             table.add_row(
                 p["market"],
                 f"[bold cyan]{p['outcome']}[/bold cyan]",
+                f"[dim]{display_id}[/dim]",
                 f"{shares:.2f}",
                 f"${entry:.3f}",
                 f"${curr:.3f}",
@@ -644,7 +687,7 @@ class CommandProcessor:
         
         self.console.print(Panel(summary, title="[bold]Real Portfolio Summary[/bold]", border_style="green"))
 
-    async def _run_backtest_handler(self, city: str, date: str, lookback_days: int = 7, is_prediction: bool = False):
+    async def _run_backtest_handler(self, city: str, date: str, lookback_days: int = 7, is_prediction: bool = False, v2_mode: bool = False):
         """Async handler for running backtest to avoid blocking the CLI loop."""
         try:
             from utils.backtest_engine import BacktestEngine
@@ -653,17 +696,26 @@ class CommandProcessor:
             
             pm_client = PolymarketClient()
             vc_client = VisualCrossingClient()
-            engine = BacktestEngine(pm_client, vc_client)
+            
+            # Initialize Tomorrow.io client if key is available
+            tomorrow_key = os.getenv("TOMORROWIO_API_KEY")
+            tm_client = None
+            if tomorrow_key:
+                from agent.tools.weather_tool import WeatherClient
+                tm_client = WeatherClient(api_key=tomorrow_key)
+
+            engine = BacktestEngine(pm_client, vc_client, tomorrow_client=tm_client)
             
             if is_prediction:
                 print(f"Fetching forecast data for {city}...")
             
-            result = await engine.run_backtest(city, date, lookback_days, is_prediction=is_prediction)
+            result = await engine.run_backtest(city, date, lookback_days, is_prediction=is_prediction, v2_mode=v2_mode)
             
             if not result.get("success"):
                 self.console.print(f"\n[red]Backtest Failed: {result.get('error')}[/red]")
                 await pm_client.close()
                 await vc_client.close()
+                if tm_client: await tm_client.close()
                 return
 
             # Display Trade Details Table
@@ -671,21 +723,26 @@ class CommandProcessor:
                 title = f"Market Prediction '{result['city']}'" if is_prediction else f"Market Backtest '{result['city']}'"
                 self.console.print(f"\n[bold green]{title}[/bold green]")
                 
-                trade_table = Table(show_header=True, header_style="bold cyan")
-                trade_table.add_column("Date", style="dim", width=8)
-                trade_table.add_column("Target", justify="center", ratio=2)
-                trade_table.add_column("Fcst", justify="center", style="magenta")
-                trade_table.add_column("Actual", justify="center", style="blue")
+                trade_table = Table(show_header=True, header_style="bold cyan", expand=True)
+                trade_table.add_column("Date", style="dim", width=7)
+                trade_table.add_column("Target", justify="center", ratio=3)
+                trade_table.add_column("VC-Fcst", justify="center", style="magenta", width=7)
                 if is_prediction:
-                    trade_table.add_column("Market ID", style="cyan", width=8)
-                trade_table.add_column("Our %", justify="right", width=6)
-                trade_table.add_column("Mkt %", justify="right", width=6)
-                trade_table.add_column("Price", justify="right")
-                trade_table.add_column("Ends In", justify="right", style="dim")
+                    trade_table.add_column("TM-Fcst", justify="center", style="dim magenta", width=7)
+                trade_table.add_column("Actual", justify="center", style="blue")
+                if is_prediction or v2_mode:
+                    trade_table.add_column("ID", style="cyan", width=8)
+                if v2_mode:
+                    trade_table.add_column("Side", justify="center", width=6)
+                trade_table.add_column("Our%", justify="right", width=5)
+                trade_table.add_column("Mkt%", justify="right", width=5)
+                trade_table.add_column("Price", justify="right", width=7)
+                if not v2_mode:
+                    trade_table.add_column("Ends In", justify="right", style="dim")
                 trade_table.add_column("Result", justify="center")
 
                 for t in result["trades"]:
-                    res_color = "green" if t["result"] == "WIN" else "red" if t["result"] == "LOSS" else "yellow"
+                    res_color = "green" if "WIN" in t["result"] else "red" if "LOSS" in t["result"] else "yellow"
                     # Compact Date: Jan 28
                     from datetime import datetime
                     try:
@@ -697,19 +754,30 @@ class CommandProcessor:
                         date_display,
                         t.get("target_display", f"{t['bucket']} ({t['target_f']}°F)"),
                         f"{t['forecast']}°F",
-                        t.get("actual", "N/A"),
                     ]
-                    
                     if is_prediction:
+                        row_data.append(f"{t.get('forecast_secondary', 'N/A')}°F")
+                    
+                    row_data.append(t.get("actual", "N/A"))
+                    
+                    if is_prediction or v2_mode:
                         row_data.append(str(t.get("market_id", "N/A")))
+                    
+                    if v2_mode:
+                        side = t.get("Side", "NONE")
+                        side_color = "bright_green" if side == "YES" else "bright_red" if side == "NO" else "dim"
+                        row_data.append(f"[{side_color}]{side}[/{side_color}]")
                         
                     row_data.extend([
                         t["prob"],
                         t.get("market_prob", "N/A"),
-                        f"${t['price']:.3f}",
-                        t.get("countdown", "N/A"),
-                        f"[{res_color}]{t['result']}[/{res_color}]"
+                        f"${t['price']:.3f}"
                     ])
+                    
+                    if not v2_mode:
+                        row_data.append(t.get("countdown", "N/A"))
+                        
+                    row_data.append(f"[{res_color}]{t['result']}[/{res_color}]")
                     
                     trade_table.add_row(*row_data)
                 self.console.print(trade_table)
@@ -745,10 +813,10 @@ class CommandProcessor:
 
             await pm_client.close()
             await vc_client.close()
+            if tm_client: await tm_client.close()
             
         except Exception as e:
-            mode_label = "Analysis" if is_prediction else "Backtest"
-            self.console.print(f"[red]Error running {mode_label}: {str(e)}[/red]")
+            self.console.print(f"\n[bold red]System Error during backtest:[/bold red] {e}")
             import traceback
             traceback.print_exc()
 
@@ -837,13 +905,15 @@ class CommandProcessor:
         table.add_row("financials [ticker]", "Direct financials lookup (Massive/Polygon)", "Instant")
         table.add_row("quote [ticker]", "Real-time quote data", "Instant")
         table.add_row("poly:backtest <city> <numdays>", "Multi-day Highest-Prob Backtest", "5-10s")
+        table.add_row("poly:backtestv2 <city> <numdays>", "Cross-Sectional YES/NO Backtest", "5-10s")
         table.add_row("poly:predict <city> <numdays>", "Multi-day Highest-Prob Prediction", "5-10s")
         table.add_row("poly:weather [city]", "Scan for weather opportunities or search by city", "Instant")
         table.add_row("poly:paperbuy <amt> <id>", "Simulate a trade in your paper portfolio", "Instant")
         table.add_row("poly:papersell <id>", "Sell an open paper trade by ID", "Instant")
-        table.add_row("poly:portfolio", "View your paper trading performance", "Instant")
-        table.add_row("poly:realportfolio", "View Real On-Chain USDC + Positions", "Instant")
-        table.add_row("poly:buy <amt> <id>", "REAL Order Execution (Max $1.00)", "~2s")
+        table.add_row("poly:paperportfolio", "View your paper trading performance", "Instant")
+        table.add_row("poly:buy <amt> <id>", "REAL Order Execution (Max $1000.00)", "~2s")
+        table.add_row("poly:sell <amt> <id>", "REAL Order Selling (Shares)", "~2s")
+        table.add_row("poly:portfolio", "View Real On-Chain USDC + Positions", "Instant")
         table.add_row("poly:simbuy <amt> <id>", "Simulate price/slippage without trading", "Instant")
         table.add_row("reset, r, ..", "Reset context/ticker", "-")
         table.add_row("help, h, ?", "Displays this menu", "-")

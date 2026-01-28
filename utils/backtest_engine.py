@@ -25,19 +25,27 @@ class BacktestEngine:
         self,
         polymarket_client: PolymarketClient,
         weather_client: VisualCrossingClient,
+        tomorrow_client: Optional[Any] = None,
         strategy_params: Optional[Dict[str, Any]] = None
     ):
         """Initialize the backtest engine."""
         self.pm_client = polymarket_client
         self.vc_client = weather_client
+        self.tm_client = tomorrow_client
         self.strategy = TradingStrategy(**(strategy_params or {}))
+
+    async def _get_weather_data(self, city: str, date_str: str) -> Optional[Dict[str, Any]]:
+        """Router for weather data. VC is now always primary for calculations."""
+        # Visual Crossing is the primary source for all backtests and predictions
+        return await self.vc_client.get_day_weather(city, date_str)
 
     async def run_backtest(
         self,
         city: str,
         target_date: str,
         lookback_days: int = 7,
-        is_prediction: bool = False
+        is_prediction: bool = False,
+        v2_mode: bool = False
     ) -> Dict[str, Any]:
         """Run a cross-sectional backtest for a specific city and date range."""
         total_invested = 0
@@ -79,7 +87,8 @@ class BacktestEngine:
             count = max(1, lookback_days)
             date_range = [(effective_end_dt - timedelta(days=i)).strftime("%Y-%m-%d") for i in range(count - 1, -1, -1)]
         
-        print(f"DEBUG: Mode={'Prediction' if is_prediction else 'Backtest'}, Range={date_range}")
+        if os.getenv("FINCODE_DEBUG", "false").lower() == "true":
+            print(f"DEBUG: Mode={'Prediction' if is_prediction else 'Backtest'}, Range={date_range}")
 
         for current_date in date_range:
             # 2. Discover Market Series
@@ -103,7 +112,8 @@ class BacktestEngine:
             }
             markets = []
             seen_ids = set()
-            print(f"DEBUG: Searching queries: {queries}")
+            if os.getenv("FINCODE_DEBUG", "false").lower() == "true":
+                print(f"DEBUG: Searching queries: {queries}")
             for q in queries:
                  res = await self.pm_client.gamma_search(q, status="all", limit=500)
                  for m in res:
@@ -114,25 +124,56 @@ class BacktestEngine:
             
             def filter_markets(market_list):
                  date_obj = datetime.strptime(current_date, "%Y-%m-%d")
-                 month_name = date_obj.strftime("%B")
+                 month_name = date_obj.strftime("%B") # e.g. "January"
+                 month_abbr = date_obj.strftime("%b") # e.g. "Jan"
                  day_num = date_obj.day
-                 date_pattern = f"{month_name} {day_num}"
+                 
+                 date_pattern_full = f"{month_name} {day_num}"
+                 date_pattern_abbr = f"{month_abbr} {day_num}"
                  target_year = current_date[:4]  # "2026"
+                 
+                 # City aliases for filtering
+                 city_search_terms = {city.lower(), weather_city.lower()}
+                 if city.lower() == "london":
+                     city_search_terms.add("london")
                  
                  filtered = []
                  for m in market_list:
-                     if date_pattern not in m.question:
+                     q_lower = m.question.lower()
+                     
+                     # 1. City Check: Question must contain the city name
+                     if not any(term in q_lower for term in city_search_terms):
                          continue
-                     if "highest temperature" not in m.question.lower():
+                         
+                     # 2. Date Pattern Check: e.g. "January 26" or "Jan 26"
+                     if date_pattern_full not in m.question and date_pattern_abbr not in m.question:
                          continue
-                     # Year Check: m.end_date (ISO "2026-01-26T...") must match current year
-                     if m.end_date and not m.end_date.startswith(target_year):
+                         
+                     # 3. Topic Check
+                     if "highest temperature" not in q_lower:
                          continue
+                         
+                     # 4. Year Check: Priority to end_date, fallback to created_at
+                     m_year = None
+                     if m.end_date and len(m.end_date) >= 4:
+                         m_year = m.end_date[:4]
+                     elif m.created_at and len(m.created_at) >= 4:
+                         # Fallback: if end_date is missing (old markets), check creation year
+                         m_year = m.created_at[:4]
+                     
+                     if m_year and m_year != target_year:
+                         continue
+                         
                      filtered.append(m)
                      
                  return filtered
 
-            relevant_markets = filter_markets(markets)
+            if os.getenv("FINCODE_DEBUG", "false").lower() == "true":
+                print(f"DEBUG: Found {len(markets)} raw unique markets across all queries.")
+                relevant_markets = filter_markets(markets)
+                print(f"DEBUG: Found {len(relevant_markets)} relevant markets after filtering.")
+            else:
+                relevant_markets = filter_markets(markets)
             
             # Fallback if nothing found and alias differs
             if not relevant_markets and city.lower() != weather_city.lower():
@@ -141,8 +182,12 @@ class BacktestEngine:
                 if alt_query not in queries:
                      alt_markets = await self.pm_client.gamma_search(alt_query, status="all", limit=500)
                      relevant_markets = filter_markets(alt_markets)
+                     if os.getenv("FINCODE_DEBUG", "false").lower() == "true":
+                         print(f"DEBUG: Alt search found {len(relevant_markets)} markets.")
 
             if not relevant_markets:
+                if os.getenv("FINCODE_DEBUG", "false").lower() == "true":
+                    print(f"DEBUG: No relevant markets found for {current_date}.")
                 continue
 
             # Sort markets by temperature threshold
@@ -161,8 +206,16 @@ class BacktestEngine:
             weather_error = None
 
             # Always attempt to fetch weather (handles both historical and forecast)
+            secondary_weather = None
             try:
-                actual_weather = await self.vc_client.get_day_weather(weather_city, current_date)
+                # Primary weather: ALWAYS Visual Crossing for calculations
+                actual_weather = await self._get_weather_data(weather_city, current_date)
+                
+                # Secondary weather: Tomorrow.io for "Double Check" during predictions
+                if is_prediction and self.tm_client:
+                    if os.getenv("FINCODE_DEBUG", "false").lower() == "true":
+                        print(f"DEBUG: [Tomorrow.io] Fetching secondary forecast for {current_date}")
+                    secondary_weather = await self.tm_client.get_day_weather(weather_city, current_date)
             except Exception as e:
                 print(f"Weather API Error for {current_date}: {e}")
                 weather_error = str(e)
@@ -236,7 +289,8 @@ class BacktestEngine:
                                     else:
                                         countdown = f"{mins}m"
                                 else:
-                                    countdown = "Ended"
+                                    # If end_date is past but market is NOT closed, it's either still trading or awaiting resolution
+                                    countdown = "Awaiting Res" if market.closed else "Live*"
                             except:
                                 countdown = "N/A"
                         else:
@@ -273,8 +327,37 @@ class BacktestEngine:
 
             if not group_results: continue
 
-            # 5. Identify the SINGLE bucket with highest Fair Price
+            # 5. Identify Potential trades (V2.2: Max 1 YES, Max 1 NO)
             best_bucket = max(group_results, key=lambda x: x["fair_price"])
+            potential_yes = []
+            potential_no = []
+            for item in group_results:
+                item_price = item["entry_data"].get("price", 0)
+                item_edge = item["entry_data"].get("edge", 0)
+                if item_price > 0:
+                    if item_edge > 0.02: # YES Edge
+                        potential_yes.append({"item": item, "side": "YES", "edge": item_edge, "price": item_price})
+                    elif item_edge < -0.02: # NO Edge
+                        potential_no.append({"item": item, "side": "NO", "edge": -item_edge, "price": 1.0 - item_price})
+            
+            # Sort both by absolute edge descending
+            potential_yes.sort(key=lambda x: x["edge"], reverse=True)
+            potential_no.sort(key=lambda x: x["edge"], reverse=True)
+            
+            # Select top trades
+            selected_trades = []
+            if potential_yes:
+                selected_trades.append(potential_yes[0])
+            
+            # For V2 mode, we also allow a NO hedge
+            if v2_mode and potential_no:
+                # Basic rule: Don't pick the same bucket for YES and NO (contradictory)
+                # Usually edge logic prevents this anyway, but let's be safe.
+                best_no = potential_no[0]
+                if not selected_trades or best_no["item"] is not selected_trades[0]["item"]:
+                    selected_trades.append(best_no)
+                elif len(potential_no) > 1:
+                    selected_trades.append(potential_no[1])
             
             # status check
             is_future = datetime.strptime(current_date, "%Y-%m-%d").date() >= datetime.now().date()
@@ -317,39 +400,72 @@ class BacktestEngine:
                 creation_ts = market.created_at.replace("Z", "+00:00")
                 creation_date_str = datetime.fromisoformat(creation_ts).strftime("%Y-%m-%d %H:%M")
 
-                is_best = (item is best_bucket)
-                should_trade = entry_data.get("edge", 0) > 0 and entry_data.get("price", 0) > 0
+                is_best_v1 = (item is best_bucket)
+                price = entry_data.get("price", 0)
+                edge = entry_data.get("edge", 0)
+                fair_price = item["fair_price"]
                 
+                if os.getenv("FINCODE_DEBUG", "false").lower() == "true":
+                    print(f"DEBUG: Bucket {bucket_label} - Fair: {fair_price:.3f}, Mkt: {price:.3f}, Edge: {edge:.3f}")
+                
+                 # Check if this bucket/side was selected
+                selected_info = next((t for t in selected_trades if t["item"] is item), None)
+                trade_side = None
+                trade_price = 0
+                trade_edge = 0
+                
+                if selected_info:
+                    # V1 constraint: V1 must be YES and must be the BEST bucket
+                    if not v2_mode:
+                        if selected_info["side"] == "YES" and is_best_v1:
+                            trade_side = selected_info["side"]
+                            trade_price = selected_info["price"]
+                            trade_edge = selected_info["edge"]
+                    else:
+                        # V2: Take the selected trade (YES or NO)
+                        trade_side = selected_info["side"]
+                        trade_price = selected_info["price"]
+                        trade_edge = selected_info["edge"]
+
                 # Calculate trade metrics
                 payout = 0
                 pnl = 0
                 res_str = "SKIPPED"
                 
-                if should_trade:
+                if trade_side:
                     if not is_future:
-                        shares = self.ALLOCATION_PER_TRADE / entry_data["price"]
-                        payout = shares * resolution
-                        pnl = payout - self.ALLOCATION_PER_TRADE
-                        res_str = "WIN" if resolution > 0.9 else "LOSS"
+                        shares = self.ALLOCATION_PER_TRADE / trade_price
+                        # If side is YES, payout is based on YES resolution (resolution)
+                        # If side is NO, payout is based on NO resolution (1.0 - resolution)
+                        outcome_res = resolution if trade_side == "YES" else (1.0 - resolution)
                         
-                        # CRITICAL: Only update GLOBAL totals for the BEST bucket
-                        if is_best:
-                            total_invested += self.ALLOCATION_PER_TRADE
-                            total_payout += payout
-                            resolved_invested += self.ALLOCATION_PER_TRADE
-                            resolved_payout += payout
+                        payout = shares * outcome_res
+                        pnl = payout - self.ALLOCATION_PER_TRADE
+                        res_str = f"WIN ({trade_side})" if outcome_res > 0.9 else f"LOSS ({trade_side})"
+                        
+                        total_invested += self.ALLOCATION_PER_TRADE
+                        total_payout += payout
+                        resolved_invested += self.ALLOCATION_PER_TRADE
+                        resolved_payout += payout
                     else:
-                        res_str = "PENDING"
-                        if is_best:
-                            pending_invested += self.ALLOCATION_PER_TRADE
-                            total_invested += self.ALLOCATION_PER_TRADE
+                        res_str = f"PENDING ({trade_side})"
+                        pending_invested += self.ALLOCATION_PER_TRADE
+                        total_invested += self.ALLOCATION_PER_TRADE
                 
-                row_roi = (pnl / self.ALLOCATION_PER_TRADE * 100) if should_trade and not is_future else 0
+                row_roi = (pnl / self.ALLOCATION_PER_TRADE * 100) if trade_side and not is_future else 0
 
+                # Calculate side-relative metrics for CSV
+                csv_prob = item['fair_price']
+                csv_price = entry_data.get("price", 0)
+                if trade_side == "NO":
+                    csv_prob = 1.0 - csv_prob
+                    csv_price = 1.0 - csv_price
+                
                 all_results.append({
                     "Market ID": market.id,
                     "Market Group": f"Highest temperature in {city} on {current_date}?",
                     "Outcome Bucket": bucket_label,
+                    "Side": trade_side or "NONE",
                     "Status": status,
                     "Market Creation Date": creation_date_str,
                     "Start of Day Date": prediction_time.strftime("%Y-%m-%d %H:%M"),
@@ -358,21 +474,21 @@ class BacktestEngine:
                     "Forecast Update Time": actual_weather.get("forecast_time", "N/A"),
                     "Actual Max Temp (F)": round(actual_weather["tempmax"], 1) if not is_future else "PENDING",
                     "Target Fahrenheit": round(threshold_info.get("value"), 1),
-                    "Predicted Probability": f"{int(item['fair_price'] * 100)}% ({round(item['fair_price'], 2)})",
-                    "Best Entry Price": round(entry_data["price"], 3),
+                    "Predicted Probability": f"{int(csv_prob * 100)}% ({round(csv_prob, 2)})",
+                    "Best Entry Price": round(csv_price, 3),
                     "Ends In": entry_data.get("countdown", "N/A"),
                     "Entry Time": entry_data["timestamp"],
                     "Resolution": res_val,
                     "Resolution Source": "OFFICIAL" if is_real_resolution else "SIMULATED",
                     "Time Till Resolution": time_left_str,
-                    "Invested ($)": self.ALLOCATION_PER_TRADE if should_trade and is_best else 0,
-                    "Payout ($)": round(payout, 2) if should_trade else "N/A",
-                    "PnL ($)": round(pnl, 2) if should_trade else "N/A",
-                    "ROI (%)": f"{row_roi:.1f}%" if should_trade and not is_future else "N/A",
-                    "Is Recommendation": "YES" if is_best else "NO"
+                    "Invested ($)": self.ALLOCATION_PER_TRADE if trade_side else 0,
+                    "Payout ($)": round(payout, 2) if trade_side else "N/A",
+                    "PnL ($)": round(pnl, 2) if trade_side else "N/A",
+                    "ROI (%)": f"{row_roi:.1f}%" if trade_side and not is_future else "N/A",
+                    "Is Recommendation": "YES" if is_best_v1 else "NO"
                 })
 
-                if is_best:
+                if is_best_v1 or v2_mode:
                     # Default to simulated weather
                     raw_actual = actual_weather["tempmax"]
                     actual_display = f"{round(raw_actual, 1)}°F"
@@ -402,21 +518,30 @@ class BacktestEngine:
                             # Add small marker
                             actual_display += "*"
 
+                    # Calculate side-relative probabilities for display
+                    dis_prob = item['fair_price']
+                    dis_mkt_prob = price
+                    if trade_side == "NO":
+                        dis_prob = 1.0 - dis_prob
+                        dis_mkt_prob = 1.0 - dis_mkt_prob
+
                     trades_summary.append({
                         "date": current_date,
                         "market_id": market.id,
                         "market_name": market.question,
                         "bucket": bucket_label,
-                        "target_f": round(threshold_info.get("value"), 0), # Added for compatibility
+                        "Side": trade_side or "NONE",
+                        "target_f": round(threshold_info.get("value"), 0),
                         "target_display": f"{bucket_label} ({round(threshold_info.get('value'), 1)}°F)",
                         "forecast": round(actual_weather.get("tempmax", 0), 1),
                         "forecast_time": actual_weather.get("forecast_time", "N/A"),
                         "actual": actual_display,
-                        "prob": f"{int(item['fair_price'] * 100)}%",
-                        "market_prob": f"{int(entry_data['price'] * 100)}%",
-                        "price": round(entry_data["price"], 3),
+                        "prob": f"{int(dis_prob * 100)}%",
+                        "market_prob": f"{int(dis_mkt_prob * 100)}%",
+                        "price": round(trade_price, 3) if trade_side else round(price, 3),
                         "countdown": entry_data.get("countdown", "N/A"),
-                        "result": res_str
+                        "result": res_str,
+                        "forecast_secondary": round(secondary_weather.get("tempmax", 0), 1) if secondary_weather else "N/A"
                     })
 
         # 6. Save and Return Summary
@@ -506,18 +631,22 @@ class BacktestEngine:
 
         if is_discrete:
             abs_diff = abs(diff)
-            if abs_diff < 1.0: prob = 0.95
-            elif abs_diff < 2.0: prob = 0.70
-            elif abs_diff < 3.0: prob = 0.30
-            else: prob = 0.05
+            if abs_diff < 0.5: prob = 0.90
+            elif abs_diff < 1.0: prob = 0.70
+            elif abs_diff < 1.5: prob = 0.30
+            elif abs_diff < 2.0: prob = 0.10
+            else: prob = 0.02
         elif is_below:
-            if diff < -2.0: prob = 0.95
-            elif diff > 2.0: prob = 0.05
-            else: prob = 0.5 - (diff / 4.0)
+            if diff < -1.5: prob = 0.98
+            elif diff > 1.5: prob = 0.02
+            else: prob = 0.5 - (diff / 2.5) # Window of 1.25 degrees each side
         else: # is_above
-            if diff > 2.0: prob = 0.95
-            elif diff < -2.0: prob = 0.05
-            else: prob = 0.5 + (diff / 4.0)
+            if diff > 1.5: prob = 0.98
+            elif diff < -1.5: prob = 0.02
+            else: prob = 0.5 + (diff / 2.5)
+        
+        # Ensure bounds
+        prob = max(0.01, min(0.99, prob))
 
         return {"probability": prob, "threshold_f": target_val, "actual_f": actual_val}
 

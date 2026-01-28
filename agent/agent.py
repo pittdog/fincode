@@ -249,7 +249,7 @@ class Agent:
             tools.append(
                 StructuredTool(
                     name="place_real_order",
-                    description="Place a REAL order on Polymarket. Parameters: amount (USDC), token_id (CLOB Token ID).",
+                    description="Place a REAL order on Polymarket. Parameters: amount (USDC), token_id (CLOB Token ID), side (optional, 'BUY' or 'SELL').",
                     func=pm_client.create_order,
                     args_schema=None,
                 )
