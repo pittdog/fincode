@@ -59,6 +59,162 @@ class PolymarketClient:
         if api_key:
             self.headers["Authorization"] = f"Bearer {api_key}"
 
+        # Lazy initialize ClobClient for Real Trading
+        self.clob_client = None
+        self.proxy_address = None
+
+    async def _ensure_clob_client(self):
+        """Ensure ClobClient is initialized, automating discovery if needed."""
+        if self.clob_client:
+            return True
+
+        import os
+        from py_clob_client.client import ClobClient, ApiCreds
+        
+        pk = os.getenv("POLYMARKET_WALLET_PRIVATE_KEY")
+        if not pk:
+            return False
+
+        try:
+            # Check if we have full credentials in .env
+            pm_key = os.getenv("POLYMARKET_API_KEY")
+            pm_secret = os.getenv("POLYMARKET_SECRET")
+            pm_passphrase = os.getenv("POLYMARKET_PASSPHRASE")
+            proxy_addr = os.getenv("POLYMARKET_PROXY_ADDRESS")
+            sig_type = int(os.getenv("POLYMARKET_SIGNATURE_TYPE", "0"))
+
+            # If something is missing, start discovery
+            if not all([pm_key, pm_secret, pm_passphrase, proxy_addr]):
+                logger.info("Credentials missing in .env. Attempting auto-discovery...")
+                
+                # 1. Derive Signer Address
+                temp_client = ClobClient(host="https://clob.polymarket.com", key=pk, chain_id=137)
+                signer = temp_client.get_address()
+                
+                # 2. Discover Proxy Address via Gamma API
+                if not proxy_addr:
+                    url = f"https://gamma-api.polymarket.com/public-profile"
+                    resp = await self.client.get(url, params={"address": signer})
+                    if resp.status_code == 200:
+                        proxy_addr = resp.json().get("proxyWallet")
+                        if proxy_addr:
+                            logger.info(f"Discovered Proxy Address: {proxy_addr}")
+                            sig_type = 1 # Enable Proxy Mode (POLY_PROXY)
+                
+                # 3. Create/Derive API Keys
+                # Re-initialize with detected proxy to ensure derivation is correct
+                self.clob_client = ClobClient(
+                    host="https://clob.polymarket.com",
+                    key=pk,
+                    chain_id=137,
+                    funder=proxy_addr,
+                    signature_type=sig_type
+                )
+                
+                if not pm_key:
+                    logger.info("Deriving API credentials from private key...")
+                    # create_or_derive_api_creds returns creds
+                    creds = self.clob_client.create_or_derive_api_creds()
+                    self.clob_client.set_api_creds(creds)
+                    logger.info("API credentials successfully derived and set.")
+                else:
+                    # We had keys but missing proxy, re-apply keys to the proxy-aware client
+                    self.clob_client.set_api_creds(ApiCreds(pm_key, pm_secret, pm_passphrase))
+            else:
+                # Standard full init
+                self.clob_client = ClobClient(
+                    host="https://clob.polymarket.com",
+                    key=pk,
+                    chain_id=137,
+                    creds=ApiCreds(pm_key, pm_secret, pm_passphrase),
+                    funder=proxy_addr,
+                    signature_type=sig_type
+                )
+            
+            self.proxy_address = proxy_addr
+            logger.info("ClobClient Initialized successfully.")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Failed to auto-setup Polymarket client: {e}")
+            return False
+
+    async def get_portfolio(self) -> Dict[str, Any]:
+        """Fetch real on-chain portfolio (USDC + Positions)."""
+        if not await self._ensure_clob_client():
+            return {"error": "Real trading not configured. Ensure POLYMARKET_WALLET_PRIVATE_KEY is in .env"}
+        
+        try:
+            from py_clob_client.clob_types import BalanceAllowanceParams, AssetType
+            
+            # 1. Get Collateral (USDC) Balance
+            bal_resp = self.clob_client.get_balance_allowance(
+                BalanceAllowanceParams(asset_type=AssetType.COLLATERAL)
+            )
+            usdc_balance = float(bal_resp.get("balance", 0)) / 1e6 # USDC is 6 decimals on Polygon
+            
+            # 2. Get Positions via Data API
+            # Endpoint: https://data-api.polymarket.com/positions?user=<proxy>
+            proxy = self.proxy_address
+            positions = []
+            
+            if proxy:
+                url = f"https://data-api.polymarket.com/positions?user={proxy}"
+                resp = await self.client.get(url)
+                if resp.status_code == 200:
+                    raw_positions = resp.json()
+                    for rp in raw_positions:
+                        positions.append({
+                            "asset": rp.get("asset"), # Token ID
+                            "market": rp.get("title"), # Question
+                            "outcome": rp.get("outcome"),
+                            "size": float(rp.get("size", 0)),
+                            "entry_price": float(rp.get("avgPrice", 0)),
+                            "current_price": float(rp.get("curPrice", 0)),
+                            "initial_value": float(rp.get("initialValue", 0)),
+                            "current_value": float(rp.get("currentValue", 0)),
+                            "pnl": float(rp.get("cashPnl", 0)),
+                            "pnl_percent": float(rp.get("percentPnl", 0))
+                        })
+                else:
+                    logger.warning(f"Failed to fetch positions from Data API: {resp.text}")
+
+            return {
+                "balance": usdc_balance,
+                "positions": positions
+            }
+            
+        except Exception as e:
+             logger.error(f"Portfolio Fetch Error: {e}")
+             return {"error": str(e)}
+    
+    async def create_order(self, token_id: str, amount: float, side: str = "BUY") -> Dict[str, Any]:
+        """Place a real order on Polymarket CLOB."""
+        if not await self._ensure_clob_client():
+            raise ValueError("Real trading not configured. Ensure POLYMARKET_WALLET_PRIVATE_KEY is in .env")
+
+        try:
+            from py_clob_client.clob_types import OrderType, MarketOrderArgs
+            
+            # 1. Create the market order (signs it internally)
+            order = self.clob_client.create_market_order(
+                MarketOrderArgs(
+                    token_id=token_id,
+                    amount=amount,
+                    side=side.upper()
+                )
+            )
+            
+            # 2. Post the order to the CLOB
+            # For market orders, FOK (Fill or Kill) is recommended for immediate execution
+            resp = self.clob_client.post_order(order, orderType=OrderType.FOK)
+            
+            return {"status": "success", "response": resp}
+            
+        except Exception as e:
+            logger.error(f"Real Trade Failed: {e}")
+            return {"status": "error", "message": str(e)}
+
     async def close(self):
         """Close the HTTP client."""
         await self.client.aclose()

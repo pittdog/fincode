@@ -148,28 +148,48 @@ class CommandProcessor:
                 return True, None
 
             # Handle poly:weather (with fuzzy matching for typos like 'weathter')
-            elif any(x in effective_cmd or (effective_args and x in effective_args[0]) for x in ["weather", "weathter", "wether"]):
-                # If they typed 'poly: weather' then args[0] might be the city
-                # If they typed 'poly:weather London' then effective_cmd is 'poly:weather' and args[0] is 'London'
-                # If they typed 'poly: weather London' then effective_cmd is 'poly:weather' and args is ['London']
-                
-                # Re-parse city correctly
-                if effective_cmd == "poly:weather" or effective_cmd == "poly:weathter" or effective_cmd == "poly:wether":
-                    city = " ".join(effective_args)
-                else:
-                    # Case like 'poly: weather London' where effective_cmd was parsed as 'poly:weather' already
-                    city = " ".join(effective_args)
+            elif effective_cmd == "poly:realportfolio":
+                 if not self._pm_client_cache:
+                     from agent.tools.polymarket_tool import get_polymarket_client
+                     self._pm_client_cache = await get_polymarket_client()
+                 self.pm_client = self._pm_client_cache
+ 
+                 self.console.print("[bold yellow]Fetching On-Chain Portfolio...[/bold yellow]")
+                 data = await self.pm_client.get_portfolio()
+                 
+                 if "error" in data:
+                     self.console.print(f"[bold red]Error:[/bold red] {data['error']}")
+                 else:
+                     await self._display_real_portfolio(data)
+                 
+                 return True, None
 
-                query = "temperature"
-                if city:
-                    self.console.print(f"[bold cyan]Searching Polymarket Weather for:[/bold cyan] [yellow]{city}[/yellow]")
-                    result = await self._exec_tool("search_weather_markets", query=query, city=city)
-                else:
-                    self.console.print(f"[bold cyan]Scanning Polymarket Weather Opportunities...[/bold cyan]")
-                    result = await self._exec_tool("search_weather_markets", query=query)
-                
-                self._display_weather_markets(result, city or "All Cities")
-                return True, None
+            elif any(x in effective_cmd or (effective_args and x in effective_args[0]) for x in ["weather", "weathter", "wether"]):
+                 # Check if it was actually poly:realportfolio (redundant safety but ok)
+                 if effective_cmd == "poly:realportfolio":
+                     pass # Handled above
+                 else:
+                    # If they typed 'poly: weather' then args[0] might be the city
+                    # If they typed 'poly:weather London' then effective_cmd is 'poly:weather' and args[0] is 'London'
+                    # If they typed 'poly: weather London' then effective_cmd is 'poly:weather' and args is ['London']
+                    
+                    # Re-parse city correctly
+                    if effective_cmd == "poly:weather" or effective_cmd == "poly:weathter" or effective_cmd == "poly:wether":
+                        city = " ".join(effective_args)
+                    else:
+                        # Case like 'poly: weather London' where effective_cmd was parsed as 'poly:weather' already
+                        city = " ".join(effective_args)
+
+                    query = "temperature"
+                    if city:
+                        self.console.print(f"[bold cyan]Searching Polymarket Weather for:[/bold cyan] [yellow]{city}[/yellow]")
+                        result = await self._exec_tool("search_weather_markets", query=query, city=city)
+                    else:
+                        self.console.print(f"[bold cyan]Scanning Polymarket Weather Opportunities...[/bold cyan]")
+                        result = await self._exec_tool("search_weather_markets", query=query)
+                    
+                    self._display_weather_markets(result, city or "All Cities")
+                    return True, None
 
             elif effective_cmd == "poly:predict":
                 if not effective_args:
@@ -206,6 +226,36 @@ class CommandProcessor:
             elif effective_cmd == "poly:buy":
                 if len(effective_args) < 2:
                     self.console.print("[red]Error: Usage: poly:buy <amount> <market_id>[/red]")
+                    return True, None
+                
+                amount = float(effective_args[0])
+                market_id = effective_args[1]
+                
+                self.console.print(f"[bold green]Executing REAL Buy: ${amount:.2f} on {market_id}...[/bold green]")
+                
+                if not self._pm_client_cache:
+                    from agent.tools.polymarket_tool import get_polymarket_client
+                    self._pm_client_cache = await get_polymarket_client()
+                
+                # Check if this is a Gamma ID (short) or Token ID (long)
+                token_id = market_id
+                if len(market_id) < 20: 
+                    # Likely a Gamma ID, resolve it
+                    self.console.print(f"[dim]Resolving Gamma ID {market_id} to CLOB Token ID...[/dim]")
+                    market = await self._pm_client_cache.get_market_by_id(market_id)
+                    if not market or not market.clob_token_ids:
+                        self.console.print(f"[bold red]Error:[/bold red] Could not resolve market ID {market_id} to tokens.")
+                        return True, None
+                    token_id = market.clob_token_ids[0] # Use YES token
+                    self.console.print(f"[dim]Resolved to YES Token: {token_id[:10]}...[/dim]")
+
+                result = await self._exec_tool("place_real_order", amount=amount, token_id=token_id)
+                self._display_data("Real Trade Execution", result)
+                return True, None
+
+            elif effective_cmd == "poly:simbuy":
+                if len(effective_args) < 2:
+                    self.console.print("[red]Error: Usage: poly:simbuy <amount> <market_id>[/red]")
                     return True, None
                 amount = effective_args[0]
                 market_id = effective_args[1]
@@ -539,6 +589,61 @@ class CommandProcessor:
         self.console.print(table)
         self.console.print(f"\nPrices shown are volume-weighted fair values from order book depth.")
 
+    async def _display_real_portfolio(self, data: Dict[str, Any]):
+        """Display real on-chain portfolio/positions."""
+        bal = data.get("balance", 0.0)
+        positions = data.get("positions", [])
+        
+        self.console.print(f"\n[bold green]Real Wallet Balance:[/bold green] ${bal:.2f} USDC")
+        
+        if not positions:
+            self.console.print("[yellow]No active positions found in this account.[/yellow]")
+            return
+
+        table = Table(title="Real On-Chain Positions", header_style="bold green")
+        table.add_column("Market", ratio=4)
+        table.add_column("Outcome", justify="center")
+        table.add_column("Size", justify="right")
+        table.add_column("Entry", justify="right")
+        table.add_column("Curr", justify="right")
+        table.add_column("PnL", justify="right")
+
+        total_value = 0
+        total_pnl = 0
+
+        for p in positions:
+            shares = p["size"]
+            entry = p["entry_price"]
+            curr = p["current_price"]
+            pnl = p["pnl"]
+            pnl_perc = p["pnl_percent"]
+            val = p["current_value"]
+            
+            pnl_color = "green" if pnl >= 0 else "red"
+            total_value += val
+            total_pnl += pnl
+
+            table.add_row(
+                p["market"],
+                f"[bold cyan]{p['outcome']}[/bold cyan]",
+                f"{shares:.2f}",
+                f"${entry:.3f}",
+                f"${curr:.3f}",
+                f"[{pnl_color}]${pnl:+.2f} ({pnl_perc:+.1f}%)[/{pnl_color}]"
+            )
+
+        self.console.print(table)
+        
+        summary = Table.grid(padding=(0, 2))
+        summary.add_column(justify="right", style="bold")
+        summary.add_column(justify="left")
+        summary.add_row("Total Positions Value:", f"${total_value:.2f}")
+        pnl_color = "green" if total_pnl >= 0 else "red"
+        summary.add_row("Net On-Chain Profit:", f"[{pnl_color}]${total_pnl:+.2f}[/{pnl_color}]")
+        summary.add_row("Total Account Value:", f"[bold cyan]${(bal + total_value):.2f}[/bold cyan]")
+        
+        self.console.print(Panel(summary, title="[bold]Real Portfolio Summary[/bold]", border_style="green"))
+
     async def _run_backtest_handler(self, city: str, date: str, lookback_days: int = 7, is_prediction: bool = False):
         """Async handler for running backtest to avoid blocking the CLI loop."""
         try:
@@ -570,6 +675,7 @@ class CommandProcessor:
                 trade_table.add_column("Date", style="dim", width=8)
                 trade_table.add_column("Target", justify="center", ratio=2)
                 trade_table.add_column("Fcst", justify="center", style="magenta")
+                trade_table.add_column("Actual", justify="center", style="blue")
                 if is_prediction:
                     trade_table.add_column("Market ID", style="cyan", width=8)
                 trade_table.add_column("Our %", justify="right", width=6)
@@ -589,8 +695,9 @@ class CommandProcessor:
 
                     row_data = [
                         date_display,
-                        f"{t['bucket']} ({t['target_f']}°F)",
+                        t.get("target_display", f"{t['bucket']} ({t['target_f']}°F)"),
                         f"{t['forecast']}°F",
+                        t.get("actual", "N/A"),
                     ]
                     
                     if is_prediction:
@@ -735,7 +842,9 @@ class CommandProcessor:
         table.add_row("poly:paperbuy <amt> <id>", "Simulate a trade in your paper portfolio", "Instant")
         table.add_row("poly:papersell <id>", "Sell an open paper trade by ID", "Instant")
         table.add_row("poly:portfolio", "View your paper trading performance", "Instant")
-        table.add_row("poly:buy <amt> <id>", "Detailed simulation (no storage)", "Instant")
+        table.add_row("poly:realportfolio", "View Real On-Chain USDC + Positions", "Instant")
+        table.add_row("poly:buy <amt> <id>", "REAL Order Execution (Max $1.00)", "~2s")
+        table.add_row("poly:simbuy <amt> <id>", "Simulate price/slippage without trading", "Instant")
         table.add_row("reset, r, ..", "Reset context/ticker", "-")
         table.add_row("help, h, ?", "Displays this menu", "-")
         table.add_row("cls", "Clear screen", "-")

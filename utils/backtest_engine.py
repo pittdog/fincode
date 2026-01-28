@@ -66,11 +66,11 @@ class BacktestEngine:
             weather_city = "Los Angeles"
 
         if is_prediction:
-            # Prediction: Start from tomorrow
+            # Prediction: Start from today
             current_dt = datetime.now()
             # Ensure lookback_days is at least 1 for prediction
             count = max(1, lookback_days)
-            date_range = [(current_dt + timedelta(days=i+1)).strftime("%Y-%m-%d") for i in range(count)]
+            date_range = [(current_dt + timedelta(days=i)).strftime("%Y-%m-%d") for i in range(count)]
         else:
             # Backtest: End yesterday
             end_dt = datetime.strptime(target_date, "%Y-%m-%d")
@@ -269,6 +269,15 @@ class BacktestEngine:
             # status check
             is_future = datetime.strptime(current_date, "%Y-%m-%d").date() >= datetime.now().date()
 
+            # 4.5 Detect Official Winner in Group (if any)
+            official_winner_label = None
+            for item in group_results:
+                m = item["market"]
+                if m.closed and m.yes_price >= 0.99:
+                    # This market resolved to YES officially
+                    official_winner_label = m.question.split(" be ")[-1].split(" on ")[0]
+                    break
+
             for item in group_results:
                 market = item["market"]
                 entry_data = item["entry_data"]
@@ -354,15 +363,45 @@ class BacktestEngine:
                 })
 
                 if is_best:
+                    # Default to simulated weather
+                    raw_actual = actual_weather["tempmax"]
+                    actual_display = f"{round(raw_actual, 1)}°F"
+                    
+                    if threshold_info.get("original_unit") == "C":
+                        c_val = (raw_actual - 32) * 5/9
+                        actual_display = f"{round(c_val, 1)}°C ({round(raw_actual, 1)}°F)"
+
+                    # If official winner exists, OVERRIDE with that value
+                    if official_winner_label:
+                        # Find the winning market object to parse its threshold
+                        win_m = next((i["market"] for i in group_results if i["market"].question.split(" be ")[-1].split(" on ")[0] == official_winner_label), None)
+                        # Fallback search if label matching was inexact
+                        if not win_m:
+                             win_m = next((i["market"] for i in group_results if i["market"].closed and i["market"].yes_price >= 0.99), None)
+                        
+                        if win_m:
+                            win_info = self._parse_threshold(win_m.question)
+                            if win_info.get("original_unit") == "C":
+                                w_c = win_info["original"]
+                                w_f = win_info["value"]
+                                actual_display = f"{w_c}°C ({round(w_f, 1)}°F)"
+                            else:
+                                w_f = win_info["value"]
+                                actual_display = f"{round(w_f, 1)}°F"
+                            
+                            # Add small marker
+                            actual_display += "*"
+
                     trades_summary.append({
                         "date": current_date,
                         "market_id": market.id,
                         "market_name": market.question,
                         "bucket": bucket_label,
-                        "target_f": round(threshold_info.get("value", 0), 1),
+                        "target_f": round(threshold_info.get("value"), 0), # Added for compatibility
+                        "target_display": f"{bucket_label} ({round(threshold_info.get('value'), 1)}°F)",
                         "forecast": round(actual_weather.get("tempmax", 0), 1),
                         "forecast_time": actual_weather.get("forecast_time", "N/A"),
-                        "actual": round(actual_weather["tempmax"], 1) if not is_future else "PENDING",
+                        "actual": actual_display,
                         "prob": f"{int(item['fair_price'] * 100)}%",
                         "market_prob": f"{int(entry_data['price'] * 100)}%",
                         "price": round(entry_data["price"], 3),
