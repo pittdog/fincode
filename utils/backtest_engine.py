@@ -244,7 +244,17 @@ class BacktestEngine:
                     else:
                         countdown = "N/A"
 
-                    if closest:
+                    if is_prediction and current_date == datetime.now().strftime("%Y-%m-%d"):
+                        # Use live price for today's prediction
+                        price = market.yes_price
+                        entry_data = {
+                            "price": price,
+                            "timestamp": "LIVE",
+                            "fair_price": fair_price,
+                            "edge": fair_price - price,
+                            "countdown": countdown
+                        }
+                    elif closest:
                         price = float(closest.get("p", closest.get("price", 0.5)))
                         if price > 0:
                             entry_data = {

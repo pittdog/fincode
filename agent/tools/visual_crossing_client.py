@@ -44,11 +44,7 @@ class VisualCrossingClient:
         """
         if not self.api_key:
             logger.error("Visual Crossing API key not provided")
-            return []
-
-        if not self.api_key:
-            logger.error("Visual Crossing API key not provided")
-            return []
+            return {"days": [], "forecast_time": None}
 
         # Calculate range
         end_dt = datetime.strptime(end_date, "%Y-%m-%d")
