@@ -1,5 +1,5 @@
-"""Tomorrow.io weather API client for fetching weather forecasts."""
 import httpx
+import os
 from typing import Optional, Dict, Any, List
 from dataclasses import dataclass
 from datetime import datetime
@@ -57,6 +57,95 @@ class WeatherClient:
     async def close(self):
         """Close the HTTP client."""
         await self.client.aclose()
+
+    async def get_day_weather(self, city: str, date_str: str) -> Optional[Dict[str, Any]]:
+        """Fetch weather for a specific single day (Forecast/Today).
+        
+        Args:
+            city: City name
+            date_str: Date (YYYY-MM-DD)
+            
+        Returns:
+            Weather data matching the Visual Crossing format
+        """
+        try:
+            target_dt = datetime.strptime(date_str, "%Y-%m-%d").date()
+            
+            # 1. Fetch forecast with both daily and hourly timelines
+            # This is a bit redundant if called many times, but safer for now.
+            # We use 1d and 1h to ensure we have the best data.
+            forecast_data = await self.get_full_forecast_data(city)
+            if not forecast_data:
+                return None
+            
+            # 2. Check Daily timeline for the absolute Max/Min for the day
+            # Polymarket resolves on calendar day highs. Daily timeline is most accurate.
+            daily_timeline = forecast_data.get("timelines", {}).get("daily", [])
+            for day in daily_timeline:
+                day_time = day.get("time", "")
+                if not day_time: continue
+                day_dt = datetime.fromisoformat(day_time.replace('Z', '+00:00')).date()
+                
+                if day_dt == target_dt:
+                    val = day.get("values", {})
+                    # For current-day predictions, Tomorrow.io daily high 
+                    # is the actual recorded high so far OR the forecast high.
+                    return {
+                        "tempmax": val.get("temperatureMax"),
+                        "tempmin": val.get("temperatureMin"),
+                        "temp": val.get("temperatureApparentAvg") or val.get("temperatureAvg"),
+                        "forecast_time": datetime.now().strftime("%m-%d %H:%M")
+                    }
+            
+            # 3. Fallback to Hourly calculation if daily is missing for that day
+            hourly_timeline = forecast_data.get("timelines", {}).get("hourly", [])
+            day_hours = []
+            for entry in hourly_timeline:
+                entry_dt = datetime.fromisoformat(entry["time"].replace('Z', '+00:00')).date()
+                if entry_dt == target_dt:
+                    day_hours.append(entry["values"].get("temperature", 0))
+            
+            if day_hours:
+                return {
+                    "tempmax": max(day_hours),
+                    "tempmin": min(day_hours),
+                    "temp": sum(day_hours) / len(day_hours),
+                    "forecast_time": datetime.now().strftime("%m-%d %H:%M")
+                }
+
+            return None
+        except Exception as e:
+            logger.error(f"Tomorrow.io get_day_weather error for {city} on {date_str}: {e}")
+            return None
+
+    async def get_full_forecast_data(self, city: str) -> Optional[Dict[str, Any]]:
+        """Internal helper to get raw response from Tomorrow.io with both timelines."""
+        try:
+            city_normalized = city.title()
+            
+            # Use coordinates if we have them (more precise), otherwise use city string
+            location = f"{city}"
+            if city_normalized in self.city_coordinates:
+                 coords = self.city_coordinates[city_normalized]
+                 location = f"{coords['lat']},{coords['lon']}"
+            
+            params = {
+                "location": location,
+                "apikey": self.api_key,
+                "units": "imperial",
+                "timelines": "1d,1h"
+            }
+            
+            if os.getenv("FINCODE_DEBUG", "false").lower() == "true":
+                print(f"DEBUG: [Tomorrow.io] Real API Request for {city} (location={location})")
+
+            res = await self.client.get(f"{self.BASE_URL}{self.FORECAST_ENDPOINT}", params=params)
+            res.raise_for_status()
+            return res.json()
+        except Exception as e:
+            if os.getenv("FINCODE_DEBUG", "false").lower() == "true":
+                print(f"DEBUG: [Tomorrow.io] Error: {e}")
+            return None
 
     async def get_forecast(
         self,

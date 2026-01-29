@@ -248,6 +248,14 @@ class Agent:
             )
             tools.append(
                 StructuredTool(
+                    name="place_real_order",
+                    description="Place a REAL order on Polymarket. Parameters: amount (USDC), token_id (CLOB Token ID), side (optional, 'BUY' or 'SELL').",
+                    func=pm_client.create_order,
+                    args_schema=None,
+                )
+            )
+            tools.append(
+                StructuredTool(
                     name="simulate_polymarket_trade",
                     description="Simulate a trade on Polymarket by walking the CLOB order book for a specific amount. Parameters: amount (USDC), market_id (Token ID).",
                     func=pm_wrapper.simulate_polymarket_trade,
