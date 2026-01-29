@@ -1,7 +1,7 @@
 import json
 import os
 from datetime import datetime
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 
 class PortfolioManager:
     """Manages local paper trading portfolio."""
