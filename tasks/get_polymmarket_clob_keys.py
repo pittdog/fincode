@@ -14,8 +14,8 @@ if not private_key:
     sys.exit(1)
 
 # Debug: Masked key length check
-print(f"Private Key loaded (length: {len(private_key)})")
-print(f"Initializing client for: {private_key[:6]}...{private_key[-4:]}")
+# print(f"Private Key loaded (length: {len(private_key)})")
+# print(f"Initializing client for: {private_key[:6]}...{private_key[-4:]}")
 
 try:
     client = ClobClient(
@@ -28,14 +28,14 @@ try:
     print("Deriving/Creating API credentials (this may take a moment)...")
     api_creds = client.create_or_derive_api_creds()
 
-    print("\n" + "="*40)
-    print("POLYMARKET CLOB API CREDENTIALS")
-    print("="*40)
-    print(f"API Key:    {api_creds.api_key}")
-    print(f"Secret:     {api_creds.api_secret}")
-    print(f"Passphrase: {api_creds.api_passphrase}")
-    print("="*40)
-    print("\nIMPORTANT: Save these credentials securely. They are derived from your private key.")
+    # print("\n" + "="*40)
+    # print("POLYMARKET CLOB API CREDENTIALS")
+    # print("="*40)
+    # print(f"API Key:    {api_creds.api_key}")
+    # print(f"Secret:     {api_creds.api_secret}")
+    # print(f"Passphrase: {api_creds.api_passphrase}")
+    # print("="*40)
+    # print("\nIMPORTANT: Save these credentials securely. They are derived from your private key.")
 
 except Exception as e:
     print(f"\nError occurred: {str(e)}")
